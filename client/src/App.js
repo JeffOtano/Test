@@ -1,21 +1,13 @@
-import logo from "./logo.svg";
 import "./App.css";
 import React from "react";
+import {ArticleList} from "./components/ArticleList";
 
 function App() {
-  const [data, setData] = React.useState(null);
-
-  React.useEffect(() => {
-    fetch("/api")
-      .then((res) => res.json())
-      .then((data) => setData(data.message));
-  }, []);
 
   return (
     <div className="App">
       <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>{!data ? "This thing" : data}</p>
+        {ArticleList()}
       </header>
     </div>
   );

@@ -7,6 +7,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
+        <h1 style={{color: 'black'}}>TEST</h1>
         {ArticleList()}
       </header>
     </div>

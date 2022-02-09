@@ -1,6 +1,6 @@
 import "./App.css";
 import React from "react";
-import {ArticleList} from "./components/ArticleList";
+import ArticleList from "./components/ArticleList";
 
 function App() {
 

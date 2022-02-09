@@ -2,8 +2,6 @@ const axios = require('axios');
 var XMLParser = require('react-xml-parser');
 const PSYCHIATRY_QUERY = 'http://export.arxiv.org/api/query?search_query=all:psychiatry&start=0';
 
-const queries = []
-
 export async function getPsychiatryArticles() {
     const articles = [];
     let parser = new XMLParser();

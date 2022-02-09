@@ -6,19 +6,41 @@ import { getMachineLearningArticles } from "../util/getMachineLearningArticles";
 import { getTherapyArticles } from "../util/getTherapyArticles";
 import { getDataScienceArticles } from "../util/getDataScienceArticles";
 
-export function ArticleList() {
+export default function ArticleList() {
     const [psychiatryArticles, setPsychiatryArticles] = useState([])
     getPsychiatryArticles().then(res => setPsychiatryArticles(res));
 
     const [machineLearningArticles, setMachineLearningArticles] = useState([])
-    const [therapyArticles, setTherapyArticles] = useState([])
-    const [dataScienceArticles, setDataScienceArticles] = useState([])
+    getMachineLearningArticles().then(res => setMachineLearningArticles(res));
 
+    const [therapyArticles, setTherapyArticles] = useState([])
+    getTherapyArticles().then(res => setTherapyArticles(res));
+
+    const [dataScienceArticles, setDataScienceArticles] = useState([])
+    getDataScienceArticles().then(res => setDataScienceArticles(res));
 
     return (
         <div>
-            <h1 style={{color: 'black'}}>Article List</h1>
-            {psychiatryArticles && psychiatryArticles.map((article,index) =>
+            <h3 style={{ color: 'black' }}>Psychiatry Articles</h3>
+            {psychiatryArticles && psychiatryArticles.map((article, index) =>
+                <div key={index}>
+                    {renderArticle(article)}
+                </div>)
+            }
+            <h3 style={{ color: 'black' }}>Data Science Articles</h3>
+            {dataScienceArticles && dataScienceArticles.map((article, index) =>
+                <div key={index}>
+                    {renderArticle(article)}
+                </div>)
+            }
+            <h3 style={{ color: 'black' }}>Machine Learning Articles</h3>
+            {machineLearningArticles && machineLearningArticles.map((article, index) =>
+                <div key={index}>
+                    {renderArticle(article)}
+                </div>)
+            }
+            <h3 style={{ color: 'black' }}>Therapy Articles</h3>
+            {therapyArticles && therapyArticles.map((article, index) =>
                 <div key={index}>
                     {renderArticle(article)}
                 </div>)
@@ -27,13 +49,13 @@ export function ArticleList() {
     );
 }
 
-function sortBydate(articles){
-    function customSort(x,y){
+function sortBydate(articles) {
+    function customSort(x, y) {
         let dateOne = new Date(x.children[2].value);
         let dateTwo = new Date(y.children[2].value);
         return dateOne > dateTwo ? 1 : -1;
     }
 
-    articles.sort((x,y) => customSort(x,y));
+    articles.sort((x, y) => customSort(x, y));
     return articles;
 }

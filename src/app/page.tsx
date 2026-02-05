@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +24,9 @@ export default function Home() {
               >
                 <Github className="h-5 w-5" />
               </a>
-              <Button>Get Started</Button>
+              <Button asChild>
+                <Link href="/setup">Get Started</Link>
+              </Button>
             </div>
           </div>
         </div>
@@ -33,7 +36,7 @@ export default function Home() {
       <section className="py-20 sm:py-32">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <Badge className="mb-4" variant="outline">
-            Trusted by teams worldwide
+            No signup required
           </Badge>
           <h1 className="text-4xl sm:text-6xl font-bold tracking-tight mb-6">
             Migrate from Shortcut to Linear
@@ -41,15 +44,19 @@ export default function Home() {
             <span className="text-muted-foreground">without the headache</span>
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
-            The most comprehensive migration tool for teams ready to make the switch.
-            One-shot migrations, gradual rollouts, or real-time sync — your choice.
+            Open source migration tool. Just paste your API tokens and go.
+            No account needed, no data stored on servers.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" className="gap-2">
-              Start Migration <ArrowRight className="h-4 w-4" />
+            <Button size="lg" className="gap-2" asChild>
+              <Link href="/setup">
+                Start Migration <ArrowRight className="h-4 w-4" />
+              </Link>
             </Button>
-            <Button size="lg" variant="outline">
-              View Documentation
+            <Button size="lg" variant="outline" asChild>
+              <a href="https://github.com" target="_blank" rel="noopener noreferrer">
+                View on GitHub
+              </a>
             </Button>
           </div>
         </div>
@@ -212,21 +219,13 @@ export default function Home() {
             Ready to say goodbye to Shortcut?
           </h2>
           <p className="text-primary-foreground/80 text-lg max-w-2xl mx-auto mb-8">
-            Join hundreds of teams who&apos;ve already made the switch. Start your
-            migration today.
+            No signup, no credit card. Just paste your API tokens and migrate.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" variant="secondary" className="gap-2">
-              Start Free Migration <ArrowRight className="h-4 w-4" />
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="bg-transparent border-primary-foreground/20 hover:bg-primary-foreground/10"
-            >
-              View on GitHub
-            </Button>
-          </div>
+          <Button size="lg" variant="secondary" className="gap-2" asChild>
+            <Link href="/setup">
+              Start Migration <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
         </div>
       </section>
 

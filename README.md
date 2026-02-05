@@ -15,9 +15,9 @@
   <a href="#-contributing">Contributing</a>
 </p>
 
-<p align="center">
+<!-- <p align="center">
   <img src="docs/demo.gif" alt="Demo" width="700" />
-</p>
+</p> -->
 
 ---
 
@@ -62,11 +62,11 @@ Then open [localhost:3000](http://localhost:3000):
 
 ### Migration Modes
 
-| Mode | Description | Best For |
-|------|-------------|----------|
-| **One-Shot** | Migrate everything at once | Teams ready to switch |
-| **Team-by-Team** | Migrate gradually | Large organizations |
-| **Real-Time Sync** | Keep both in sync | Trial periods |
+| Mode | Description | Status |
+|------|-------------|--------|
+| **One-Shot** | Migrate everything at once | ✅ Available |
+| **Team-by-Team** | Migrate gradually | ✅ Available |
+| **Real-Time Sync** | Keep both in sync | 🚧 Coming soon |
 
 ### What Gets Migrated
 
@@ -76,9 +76,8 @@ Then open [localhost:3000](http://localhost:3000):
 | Epics | → | Projects |
 | Iterations | → | Cycles |
 | Labels | → | Labels |
-| Comments | → | Comments |
-| Attachments | → | Attachments |
-| Workflow States | → | Workflow States |
+
+*Coming soon: Comments, Attachments, Workflow States*
 
 ---
 
@@ -105,13 +104,6 @@ Then open [localhost:3000](http://localhost:3000):
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/JeffOtano/goodbye-shortcut)
 
-### Docker
-
-```bash
-docker build -t goodbye-shortcut .
-docker run -p 3000:3000 goodbye-shortcut
-```
-
 ### Manual
 
 ```bash
@@ -125,7 +117,7 @@ npm start
 
 | | Technology |
 |-|------------|
-| Framework | Next.js 14 |
+| Framework | Next.js 16 |
 | Language | TypeScript |
 | Styling | Tailwind CSS |
 | Components | shadcn/ui |

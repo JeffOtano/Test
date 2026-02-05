@@ -41,8 +41,8 @@ Migrating between project management tools sucks. Most solutions require:
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/JeffOtano/goodbye-shortcut.git
-cd goodbye-shortcut
+git clone https://github.com/JeffOtano/Test.git
+cd Test
 npm install
 npm run dev
 ```
@@ -102,7 +102,7 @@ Then open [localhost:3000](http://localhost:3000):
 
 ### Vercel (One Click)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/JeffOtano/goodbye-shortcut)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/JeffOtano/Test)
 
 ### Manual
 
@@ -132,7 +132,7 @@ We'd love your help making Goodbye Shortcut even better!
 ```bash
 # 1. Fork the repo
 # 2. Clone your fork
-git clone https://github.com/YOUR_USERNAME/goodbye-shortcut.git
+git clone https://github.com/YOUR_USERNAME/Test.git
 
 # 3. Create a branch
 git checkout -b my-feature

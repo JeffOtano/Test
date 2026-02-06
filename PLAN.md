@@ -20,6 +20,12 @@ This is a **client-first, database-free** open-source tool:
 - **Privacy-focused** - Your tokens stay in your browser
 - **Zero infrastructure** - No Redis, no PostgreSQL, no queues
 
+Production deployments can enable a **durable infrastructure mode**:
+- Postgres for durable cursor/job/event state
+- Redis + BullMQ for queued sync jobs
+- Dedicated worker and scheduler processes
+- Webhook routes enqueue jobs instead of executing sync inline
+
 ### High-Level Architecture
 
 ```
@@ -293,6 +299,7 @@ MIT License - permissive, enterprise-friendly
 - [x] Webhook trigger endpoints
 - [x] Webhook signature verification + replay protection
 - [x] CI quality gate (lint/typecheck/test/build)
+- [x] Durable queue-backed sync mode (Postgres + Redis + worker/scheduler)
 
 ### Ongoing Hardening
 - [ ] End-to-end integration tests against provider sandboxes

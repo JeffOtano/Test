@@ -16,6 +16,12 @@ import {
   verifyHmacSha256Signature,
 } from '@/lib/security/webhooks';
 import { consumeRateLimit, getClientIp } from '@/lib/security/rate-limit';
+import {
+  buildSyncScopeKey,
+  enqueueSyncJob,
+  SyncJobPayload,
+} from '@/lib/infra/sync-jobs';
+import { isProductionModeEnabled } from '@/lib/infra/env';
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 const WEBHOOK_REPLAY_TTL_MS = 10 * 60 * 1000;
@@ -185,18 +191,42 @@ export async function POST(request: NextRequest): Promise<Response> {
   const shortcutTeamId =
     parseString(request.headers.get('x-shortcut-team-id')) ?? parseString(body.shortcutTeamId);
 
+  const syncConfig: SyncJobPayload['config'] = {
+    direction,
+    conflictPolicy,
+    shortcutTeamId,
+    linearTeamId: credentials.linearTeamId,
+    includeComments,
+    includeAttachments,
+  };
+
   try {
+    if (isProductionModeEnabled()) {
+      const payload: SyncJobPayload = {
+        scopeKey: buildSyncScopeKey(syncConfig),
+        shortcutToken: credentials.shortcutToken,
+        linearToken: credentials.linearToken,
+        config: syncConfig,
+        triggerSource: 'linear',
+        triggerReason: 'linear webhook',
+      };
+
+      const queueJobId = await enqueueSyncJob(payload);
+      return Response.json(
+        {
+          success: true,
+          accepted: true,
+          queueJobId,
+          processedAt: new Date().toISOString(),
+        },
+        { status: 202, headers: { 'Cache-Control': 'no-store' } }
+      );
+    }
+
     const result = await runSyncCycle({
       shortcutToken: credentials.shortcutToken,
       linearToken: credentials.linearToken,
-      config: {
-        direction,
-        conflictPolicy,
-        shortcutTeamId,
-        linearTeamId: credentials.linearTeamId,
-        includeComments,
-        includeAttachments,
-      },
+      config: syncConfig,
       triggerSource: 'linear',
       triggerReason: 'linear webhook',
     });
@@ -224,6 +254,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
 export async function GET(): Promise<Response> {
   const secretConfigured = Boolean(resolveWebhookSecret('linear'));
+  const productionMode = isProductionModeEnabled();
   return Response.json(
     {
       ok: true,
@@ -231,7 +262,13 @@ export async function GET(): Promise<Response> {
       requiredHeaders: secretConfigured ? [] : ['x-shortcut-token', 'x-linear-token', 'x-linear-team-id'],
       signatureHeader: 'Linear-Signature',
       secretConfigured,
+      productionMode,
       supportedEnv: [
+        'GOODBYE_PRODUCTION_MODE',
+        'GOODBYE_POSTGRES_URL',
+        'GOODBYE_REDIS_URL',
+        'GOODBYE_SYNC_JOB_ATTEMPTS',
+        'GOODBYE_SYNC_JOB_BACKOFF_MS',
         'GOODBYE_SHORTCUT_TOKEN',
         'GOODBYE_LINEAR_TOKEN',
         'GOODBYE_LINEAR_TEAM_ID',

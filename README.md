@@ -71,6 +71,12 @@ npm run test:run
 npm run build
 ```
 
+Run infrastructure schema bootstrap (for production mode):
+
+```bash
+npm run infra:init
+```
+
 ---
 
 ## ✨ Features
@@ -124,6 +130,9 @@ For production, configure webhook secrets and run sync with server-side credenti
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
+| `GOODBYE_PRODUCTION_MODE` | Recommended (`true` for durable mode) | Enables queue-backed webhook processing |
+| `GOODBYE_POSTGRES_URL` | Required in durable mode | Postgres for cursors/jobs/events |
+| `GOODBYE_REDIS_URL` | Required in durable mode | Redis for BullMQ queue + locks |
 | `GOODBYE_SHORTCUT_TOKEN` | Yes (for webhook-only operation) | Shortcut API token for sync jobs |
 | `GOODBYE_LINEAR_TOKEN` | Yes (for webhook-only operation) | Linear API key for sync jobs |
 | `GOODBYE_LINEAR_TEAM_ID` | Yes (for webhook-only operation) | Target Linear team |
@@ -131,6 +140,9 @@ For production, configure webhook secrets and run sync with server-side credenti
 | `GOODBYE_LINEAR_WEBHOOK_SECRET` | Recommended | Verifies Linear `Linear-Signature` |
 | `GOODBYE_WEBHOOK_SHARED_SECRET` | Optional | Shared fallback secret for both providers |
 | `GOODBYE_LINEAR_WEBHOOK_TOLERANCE_MS` | Optional | Timestamp drift tolerance for Linear signed events (default: 300000ms) |
+| `GOODBYE_SYNC_WORKER_CONCURRENCY` | Optional | Concurrent durable sync workers |
+| `GOODBYE_SYNC_SCHEDULER_ENABLED` | Optional | Enables periodic scheduler enqueue |
+| `GOODBYE_SYNC_SCHEDULER_INTERVAL_SECONDS` | Optional | Polling interval for scheduler jobs |
 
 Behavior:
 - If webhook secrets are configured, unsigned/invalid webhook deliveries are rejected.
@@ -138,6 +150,7 @@ Behavior:
 - Replay attempts are rejected within a rolling TTL window.
 - Webhook endpoints enforce per-IP rate limiting to reduce abuse and burst failures.
 - If `GOODBYE_*` credentials are configured, per-request token headers are optional.
+- In durable mode, webhooks return `202` and process asynchronously via queue workers.
 
 ---
 
@@ -167,9 +180,15 @@ Behavior:
 ### Docker
 
 ```bash
-docker build -t goodbye-shortcut .
-docker run -p 3000:3000 goodbye-shortcut
+docker compose up --build
 ```
+
+This starts:
+- `app` (Next.js server)
+- `worker` (durable sync job processor)
+- `scheduler` (optional periodic sync enqueuer)
+- `postgres` (durable cursor/job/event store)
+- `redis` (durable queue + locks)
 
 ### Manual
 
@@ -177,6 +196,30 @@ docker run -p 3000:3000 goodbye-shortcut
 npm run build
 npm start
 ```
+
+For durable production mode, run these in separate processes:
+
+```bash
+npm run worker:sync
+npm run worker:scheduler
+```
+
+---
+
+## 🧱 Durable Production Mode
+
+Set `GOODBYE_PRODUCTION_MODE=true` with `GOODBYE_POSTGRES_URL` and `GOODBYE_REDIS_URL`.
+
+When enabled:
+- Webhook routes enqueue durable sync jobs instead of running inline.
+- Worker process executes jobs with retries/backoff.
+- Cursors and job/event history are stored in Postgres.
+- Redis provides queue durability and worker coordination.
+
+This mode is recommended for teams that need:
+- high reliability under webhook bursts
+- resumable/retryable server-side sync
+- auditable sync job history
 
 ---
 

@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: goodbye_shortcut
+      POSTGRES_USER: goodbye
+      POSTGRES_PASSWORD: goodbye
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U goodbye -d goodbye_shortcut']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    command: ['redis-server', '--save', '60', '1', '--loglevel', 'warning']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      GOODBYE_PRODUCTION_MODE: 'true'
+      GOODBYE_POSTGRES_URL: postgresql://goodbye:goodbye@postgres:5432/goodbye_shortcut
+      GOODBYE_REDIS_URL: redis://redis:6379
+      GOODBYE_SYNC_JOB_ATTEMPTS: '5'
+      GOODBYE_SYNC_JOB_BACKOFF_MS: '2000'
+    ports:
+      - '3000:3000'
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: npm run worker:sync
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      GOODBYE_PRODUCTION_MODE: 'true'
+      GOODBYE_POSTGRES_URL: postgresql://goodbye:goodbye@postgres:5432/goodbye_shortcut
+      GOODBYE_REDIS_URL: redis://redis:6379
+      GOODBYE_SYNC_WORKER_CONCURRENCY: '4'
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    command: npm run worker:scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      GOODBYE_PRODUCTION_MODE: 'true'
+      GOODBYE_POSTGRES_URL: postgresql://goodbye:goodbye@postgres:5432/goodbye_shortcut
+      GOODBYE_REDIS_URL: redis://redis:6379
+      GOODBYE_SYNC_SCHEDULER_ENABLED: 'false'
+      GOODBYE_SYNC_SCHEDULER_INTERVAL_SECONDS: '30'
+
+volumes:
+  postgres_data:
+  redis_data:

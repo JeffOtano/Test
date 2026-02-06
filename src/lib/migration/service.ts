@@ -1,7 +1,7 @@
 import { getState } from '../db';
 import { LinearClient } from '../linear/client';
 import { ShortcutClient } from '../shortcut/client';
-import { LinearTeam, ShortcutComment, ShortcutStory } from '@/types';
+import { LinearTeam, ShortcutComment, ShortcutStory, ShortcutTeam } from '@/types';
 
 export type MigrationPhase =
   | 'preflight'
@@ -48,6 +48,7 @@ export interface MigrationResult {
 }
 
 export interface RunMigrationOptions {
+  shortcutTeamId?: string;
   linearTeamId: string;
   mode: 'ONE_SHOT' | 'TEAM_BY_TEAM';
   includeComments: boolean;
@@ -70,6 +71,7 @@ export interface MigrationPreview {
   epics: number;
   iterations: number;
   labels: number;
+  shortcutTeams: ShortcutTeam[];
   teams: LinearTeam[];
 }
 
@@ -119,13 +121,72 @@ function normalizeCycleKey(name: string | undefined, start: string, end: string)
   return `${normalizeName(name)}|${normalizedStart}|${normalizedEnd}`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function extractMessage(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (Array.isArray(value)) {
+    const messages = value
+      .map((entry) => extractMessage(entry))
+      .filter((entry): entry is string => Boolean(entry));
+    return messages.length > 0 ? messages.join(' | ') : null;
+  }
+
+  if (!isRecord(value)) return null;
+
+  const preferredKeys = ['message', 'error', 'detail', 'title', 'reason'];
+  for (const key of preferredKeys) {
+    const message = extractMessage(value[key]);
+    if (message) return message;
+  }
+
+  if ('errors' in value) {
+    const errorsMessage = extractMessage(value.errors);
+    if (errorsMessage) return errorsMessage;
+  }
+
+  return null;
+}
+
 function formatError(error: unknown): string {
+  const direct = extractMessage(error);
+  if (direct) return direct;
+
+  if (isRecord(error)) {
+    const response = isRecord(error.response) ? error.response : null;
+    if (response) {
+      const status =
+        typeof response.status === 'number' ? response.status : undefined;
+      const statusText =
+        typeof response.statusText === 'string' ? response.statusText : '';
+      const responseMessage = extractMessage(response.data);
+      if (responseMessage) return responseMessage;
+
+      if (status) {
+        return statusText ? `HTTP ${status} ${statusText}` : `HTTP ${status}`;
+      }
+    }
+  }
+
   if (error instanceof Error) return error.message;
   return 'Unknown error';
 }
 
 function withNetworkHint(message: string): string {
-  if (message === 'Network Error' || message === 'Failed to fetch') {
+  const normalized = message.trim().toLowerCase();
+  if (
+    normalized === 'network error' ||
+    normalized === 'failed to fetch' ||
+    normalized.includes('network error') ||
+    normalized.includes('failed to fetch') ||
+    normalized.includes('fetch failed')
+  ) {
     return `${message}. This is usually a connectivity or browser policy issue.`;
   }
   return message;
@@ -240,6 +301,10 @@ export async function runMigration(
     throw new Error('Missing target Linear team');
   }
 
+  if (options.mode === 'TEAM_BY_TEAM' && options.shortcutTeamId == null) {
+    throw new Error('Missing source Shortcut team for Team-by-Team mode');
+  }
+
   const shortcut = new ShortcutClient(state.shortcutToken);
   const linear = new LinearClient(state.linearToken);
 
@@ -267,7 +332,7 @@ export async function runMigration(
 
     if (options.mode === 'TEAM_BY_TEAM') {
       result.warnings.push(
-        'Team-by-Team mode enabled: this run only targets the selected Linear team.'
+        `Team-by-Team mode enabled: migrating only Shortcut team ${options.shortcutTeamId} into the selected Linear team.`
       );
     }
 
@@ -286,11 +351,16 @@ export async function runMigration(
       message: 'Fetching Shortcut data...',
     });
 
+    const storiesPromise =
+      options.mode === 'TEAM_BY_TEAM' && options.shortcutTeamId != null
+        ? shortcut.getStoriesForTeam(options.shortcutTeamId)
+        : shortcut.getAllStories();
+
     const [labels, epics, iterations, stories] = await Promise.all([
       shortcut.getLabels(),
       shortcut.getEpics(),
       shortcut.getIterations(),
-      shortcut.getAllStories(),
+      storiesPromise,
     ]);
 
     const labelMap = new Map<number, string>();
@@ -699,20 +769,23 @@ export async function validateTokens(tokens?: {
 }
 
 // Fetch migration preview data and target teams for the wizard.
-export async function fetchMigrationPreview(): Promise<MigrationPreview | null> {
+export async function fetchMigrationPreview(): Promise<MigrationPreview> {
   const state = getState();
 
-  if (!state.shortcutToken || !state.linearToken) return null;
+  if (!state.shortcutToken || !state.linearToken) {
+    throw new Error('Missing API tokens. Validate tokens in Setup first.');
+  }
 
   try {
     const shortcutClient = new ShortcutClient(state.shortcutToken);
     const linearClient = new LinearClient(state.linearToken);
 
-    const [stories, epics, iterations, labels, teams] = await Promise.all([
+    const [stories, epics, iterations, labels, shortcutTeams, teams] = await Promise.all([
       shortcutClient.getAllStories(),
       shortcutClient.getEpics(),
       shortcutClient.getIterations(),
       shortcutClient.getLabels(),
+      shortcutClient.getTeams(),
       linearClient.getTeams({ includeAllPages: true }),
     ]);
 
@@ -721,9 +794,10 @@ export async function fetchMigrationPreview(): Promise<MigrationPreview | null> 
       epics: epics.length,
       iterations: iterations.length,
       labels: labels.length,
+      shortcutTeams,
       teams,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`Preview fetch failed: ${withNetworkHint(formatError(error))}`);
   }
 }

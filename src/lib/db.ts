@@ -10,9 +10,15 @@ export interface StoredLinearTeam {
   name: string;
 }
 
+export interface StoredShortcutTeam {
+  id: string;
+  name: string;
+}
+
 export type StoredMigrationMode = 'ONE_SHOT' | 'TEAM_BY_TEAM';
 
 export interface MigrationSettings {
+  shortcutTeamId?: string;
   linearTeamId?: string;
   mode: StoredMigrationMode;
   includeComments: boolean;
@@ -27,6 +33,8 @@ export interface AppState {
   linearWorkspace?: string;
   shortcutUserName?: string;
   linearUserName?: string;
+  shortcutTeams?: StoredShortcutTeam[];
+  shortcutTeamId?: string;
   linearTeams?: StoredLinearTeam[];
   linearTeamId?: string;
   migrationMode?: StoredMigrationMode;
@@ -64,9 +72,26 @@ function normalizeState(value: unknown): AppState {
         .filter((team) => team.id && team.name)
     : undefined;
 
+  const shortcutTeams = Array.isArray(value.shortcutTeams)
+    ? value.shortcutTeams
+        .filter((team): team is Record<string, unknown> => isRecord(team))
+        .map((team) => ({
+          id: String(team.id ?? ''),
+          name: String(team.name ?? ''),
+        }))
+        .filter((team) => team.id && team.name)
+    : undefined;
+
   const mode = value.migrationMode;
   const migrationMode: StoredMigrationMode | undefined =
     mode === 'ONE_SHOT' || mode === 'TEAM_BY_TEAM' ? mode : undefined;
+
+  const shortcutTeamId =
+    typeof value.shortcutTeamId === 'string'
+      ? value.shortcutTeamId
+      : typeof value.shortcutTeamId === 'number'
+        ? String(value.shortcutTeamId)
+        : undefined;
 
   return {
     shortcutToken:
@@ -80,6 +105,8 @@ function normalizeState(value: unknown): AppState {
       typeof value.shortcutUserName === 'string' ? value.shortcutUserName : undefined,
     linearUserName:
       typeof value.linearUserName === 'string' ? value.linearUserName : undefined,
+    shortcutTeams,
+    shortcutTeamId,
     linearTeams,
     linearTeamId: typeof value.linearTeamId === 'string' ? value.linearTeamId : undefined,
     migrationMode,
@@ -121,6 +148,7 @@ export function getState(): AppState {
 
 export function getMigrationSettings(state: AppState = getState()): MigrationSettings {
   return {
+    shortcutTeamId: state.shortcutTeamId,
     linearTeamId: state.linearTeamId,
     mode: state.migrationMode ?? DEFAULT_MIGRATION_SETTINGS.mode,
     includeComments: state.includeComments ?? DEFAULT_MIGRATION_SETTINGS.includeComments,
@@ -144,6 +172,8 @@ export function setState(state: Partial<AppState>): void {
 export function setMigrationSettings(settings: Partial<MigrationSettings>): void {
   const current = getMigrationSettings();
   setState({
+    shortcutTeamId:
+      'shortcutTeamId' in settings ? settings.shortcutTeamId : current.shortcutTeamId,
     linearTeamId:
       'linearTeamId' in settings ? settings.linearTeamId : current.linearTeamId,
     migrationMode: settings.mode ?? current.mode,

@@ -16,7 +16,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
-import { getMigrationSettings, setMigrationSettings, setState } from '@/lib/db';
+import {
+  getMigrationSettings,
+  setMigrationSettings,
+  setState,
+  StoredShortcutTeam,
+} from '@/lib/db';
 import {
   fetchMigrationPreview,
   MigrationPreview,
@@ -66,6 +71,16 @@ function describeRun(result: MigrationResult): string {
   return 'Migration complete with errors';
 }
 
+function formatUiError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error;
+  }
+  return 'Unexpected error. Please retry.';
+}
+
 export default function MigratePage() {
   const appState = useAppState();
   const persistedSettings = getMigrationSettings(appState);
@@ -73,6 +88,9 @@ export default function MigratePage() {
 
   const [step, setStep] = useState(0);
   const [modeOverride, setModeOverride] = useState<SelectableMode | null>(null);
+  const [selectedShortcutTeamIdOverride, setSelectedShortcutTeamIdOverride] = useState<
+    string | null
+  >(null);
   const [selectedTeamIdOverride, setSelectedTeamIdOverride] = useState<string | null>(null);
   const [includeCommentsOverride, setIncludeCommentsOverride] = useState<boolean | null>(
     null
@@ -81,6 +99,10 @@ export default function MigratePage() {
     useState<boolean | null>(null);
   const [dryRunOverride, setDryRunOverride] = useState<boolean | null>(null);
   const [preview, setPreview] = useState<MigrationPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [shortcutTeamsOverride, setShortcutTeamsOverride] = useState<
+    StoredShortcutTeam[] | null
+  >(null);
   const [teamsOverride, setTeamsOverride] = useState<
     Array<{ id: string; key: string; name: string }> | null
   >(null);
@@ -89,6 +111,10 @@ export default function MigratePage() {
   const [result, setResult] = useState<MigrationResult | null>(null);
 
   const mode = modeOverride ?? persistedSettings.mode;
+  const selectedShortcutTeamId =
+    selectedShortcutTeamIdOverride ??
+    persistedSettings.shortcutTeamId ??
+    appState.shortcutTeams?.[0]?.id;
   const selectedTeamId =
     selectedTeamIdOverride ??
     persistedSettings.linearTeamId ??
@@ -99,30 +125,57 @@ export default function MigratePage() {
   const includeAttachments =
     includeAttachmentsOverride ?? persistedSettings.includeAttachments;
   const dryRun = dryRunOverride ?? persistedSettings.dryRun;
+  const shortcutTeams = shortcutTeamsOverride ?? appState.shortcutTeams ?? [];
   const teams = teamsOverride ?? appState.linearTeams ?? [];
+  const canStartMigration = Boolean(
+    selectedTeamId &&
+      (mode !== 'TEAM_BY_TEAM' || selectedShortcutTeamId !== undefined)
+  );
 
   async function loadPreview(): Promise<void> {
     setLoading(true);
-    const data = await fetchMigrationPreview();
-    setPreview(data);
+    setPreviewError(null);
 
-    if (data) {
+    try {
+      const data = await fetchMigrationPreview();
+      setPreview(data);
+
+      const normalizedShortcutTeams = data.shortcutTeams
+        .map((team) => ({
+          id: String(team.id),
+          name: team.name,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
       const normalizedTeams = data.teams.map((team) => ({
         id: team.id,
         key: team.key,
         name: team.name,
       }));
+      setShortcutTeamsOverride(normalizedShortcutTeams);
       setTeamsOverride(normalizedTeams);
-      setState({ linearTeams: normalizedTeams });
+      setState({
+        shortcutTeams: normalizedShortcutTeams,
+        linearTeams: normalizedTeams,
+      });
+
+      if (!selectedShortcutTeamId && normalizedShortcutTeams.length > 0) {
+        const nextShortcutTeamId = normalizedShortcutTeams[0].id;
+        setSelectedShortcutTeamIdOverride(nextShortcutTeamId);
+        setState({ shortcutTeamId: nextShortcutTeamId });
+      }
 
       if (!selectedTeamId && normalizedTeams.length > 0) {
         const nextTeamId = normalizedTeams[0].id;
         setSelectedTeamIdOverride(nextTeamId);
         setState({ linearTeamId: nextTeamId });
       }
+    } catch (error) {
+      setPreview(null);
+      setPreviewError(formatUiError(error));
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   async function handleContinueToConfig(): Promise<void> {
@@ -131,7 +184,7 @@ export default function MigratePage() {
   }
 
   async function startMigration(): Promise<void> {
-    if (!selectedTeamId) return;
+    if (!canStartMigration) return;
 
     setStep(2);
     setResult(null);
@@ -143,6 +196,7 @@ export default function MigratePage() {
     });
 
     setMigrationSettings({
+      shortcutTeamId: mode === 'TEAM_BY_TEAM' ? selectedShortcutTeamId : undefined,
       mode,
       linearTeamId: selectedTeamId,
       includeComments,
@@ -150,21 +204,31 @@ export default function MigratePage() {
       dryRun,
     });
 
-    const migrationResult = await runMigration(
-      {
-        mode,
-        linearTeamId: selectedTeamId,
-        includeComments,
-        includeAttachments,
-        dryRun,
-      },
-      (nextProgress) => {
-        setProgress(nextProgress);
-      }
-    );
+    try {
+      const migrationResult = await runMigration(
+        {
+          shortcutTeamId: mode === 'TEAM_BY_TEAM' ? selectedShortcutTeamId : undefined,
+          mode,
+          linearTeamId: selectedTeamId,
+          includeComments,
+          includeAttachments,
+          dryRun,
+        },
+        (nextProgress) => {
+          setProgress(nextProgress);
+        }
+      );
 
-    setResult(migrationResult);
-    setStep(3);
+      setResult(migrationResult);
+      setStep(3);
+    } catch (error) {
+      setProgress({
+        phase: 'error',
+        current: 0,
+        total: 1,
+        message: formatUiError(error),
+      });
+    }
   }
 
   if (!hasTokens) {
@@ -304,6 +368,39 @@ export default function MigratePage() {
                 </div>
 
                 <div className="space-y-4 rounded-lg border p-4">
+                  {mode === 'TEAM_BY_TEAM' && (
+                    <div>
+                      <label
+                        htmlFor="source-shortcut-team"
+                        className="mb-1 block text-sm font-medium"
+                      >
+                        Source Shortcut Team
+                      </label>
+                      <select
+                        id="source-shortcut-team"
+                        className="w-full rounded-md border bg-background px-3 py-2"
+                        value={selectedShortcutTeamId ?? ''}
+                        onChange={(event) => {
+                          const raw = event.target.value;
+                          const nextShortcutTeamId = raw || undefined;
+                          setSelectedShortcutTeamIdOverride(nextShortcutTeamId ?? null);
+                          setState({ shortcutTeamId: nextShortcutTeamId });
+                        }}
+                      >
+                        <option value="">Select a Shortcut team</option>
+                        {shortcutTeams.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Only stories from this Shortcut team will migrate in Team-by-Team
+                        mode.
+                      </p>
+                    </div>
+                  )}
+
                   <div>
                     <label
                       htmlFor="target-team"
@@ -384,17 +481,27 @@ export default function MigratePage() {
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back
                   </Button>
-                  <Button onClick={startMigration} disabled={!selectedTeamId}>
+                  <Button onClick={startMigration} disabled={!canStartMigration}>
                     Start Migration <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </div>
               </div>
             ) : (
               <div className="py-8 text-center text-muted-foreground">
-                <p>Failed to fetch preview. Re-check your token setup.</p>
-                <Button variant="outline" className="mt-4" asChild>
-                  <Link href="/setup">Check Setup</Link>
-                </Button>
+                <p className="font-medium text-foreground">Failed to fetch preview.</p>
+                {previewError && (
+                  <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
+                    {previewError}
+                  </p>
+                )}
+                <div className="mt-4 flex justify-center gap-3">
+                  <Button variant="outline" onClick={loadPreview}>
+                    Retry Preview
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/setup">Check Setup</Link>
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

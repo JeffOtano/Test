@@ -18,6 +18,15 @@ interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   __retryCount?: number;
 }
 
+type SearchStoriesResponse = {
+  data?: ShortcutStory[];
+  next?: string | null;
+};
+
+const SEARCH_STORIES_MAX_PAGE_SIZE = 250;
+const GROUP_STORIES_MAX_LIMIT = 1000;
+const MIN_BATCH_SIZE = 1;
+
 export class ShortcutClient {
   private client: AxiosInstance;
   private rateLimitRemaining = 200;
@@ -197,21 +206,53 @@ export class ShortcutClient {
     return this.searchStories(`iteration:${iterationId}`);
   }
 
-  async getAllStories(batchSize: number = 100): Promise<ShortcutStory[]> {
+  async getStoriesForTeam(
+    teamId: string | number,
+    batchSize: number = GROUP_STORIES_MAX_LIMIT
+  ): Promise<ShortcutStory[]> {
+    const normalizedBatchSize = this.normalizeBatchSize(
+      batchSize,
+      GROUP_STORIES_MAX_LIMIT
+    );
+    return this.getStoriesForGroup(teamId, normalizedBatchSize);
+  }
+
+  async getAllStories(batchSize: number = 1000): Promise<ShortcutStory[]> {
+    const searchPageSize = this.normalizeBatchSize(
+      batchSize,
+      SEARCH_STORIES_MAX_PAGE_SIZE
+    );
+
+    try {
+      return await this.getAllStoriesViaSearch(searchPageSize);
+    } catch {
+      // Search endpoints can fail for very large workspaces; use group pagination as fallback.
+      const groupBatchSize = this.normalizeBatchSize(batchSize, GROUP_STORIES_MAX_LIMIT);
+      return this.getAllStoriesViaGroups(groupBatchSize);
+    }
+  }
+
+  private normalizeBatchSize(batchSize: number, max: number): number {
+    const parsed = Number.isFinite(batchSize)
+      ? Math.trunc(batchSize)
+      : SEARCH_STORIES_MAX_PAGE_SIZE;
+    return Math.min(Math.max(parsed, MIN_BATCH_SIZE), max);
+  }
+
+  private async getAllStoriesViaSearch(batchSize: number): Promise<ShortcutStory[]> {
     const allStories: ShortcutStory[] = [];
-    let nextToken: string | undefined;
-    let previousToken: string | undefined;
+    let nextToken: string | undefined = undefined;
+    let previousToken: string | undefined = undefined;
 
     while (true) {
       await this.checkRateLimit();
-      const response = await this.client.post('/stories/search', {
-        page_size: batchSize,
-        next: nextToken,
-      });
+      const params = this.buildStoriesSearchParams(batchSize, nextToken);
+      const response = await this.client.get<SearchStoriesResponse>(
+        '/search/stories',
+        { params }
+      );
 
-      const batch = Array.isArray(response.data?.data)
-        ? (response.data.data as ShortcutStory[])
-        : [];
+      const batch = Array.isArray(response.data?.data) ? response.data.data : [];
       allStories.push(...batch);
 
       previousToken = nextToken;
@@ -224,6 +265,84 @@ export class ShortcutClient {
     }
 
     return allStories;
+  }
+
+  private async getAllStoriesViaGroups(batchSize: number): Promise<ShortcutStory[]> {
+    const teams = await this.getTeams();
+    const storiesById = new Map<number, ShortcutStory>();
+
+    for (const team of teams) {
+      const stories = await this.getStoriesForGroup(team.id, batchSize);
+      for (const story of stories) {
+        storiesById.set(story.id, story);
+      }
+    }
+
+    return Array.from(storiesById.values());
+  }
+
+  private async getStoriesForGroup(
+    teamId: string | number,
+    batchSize: number
+  ): Promise<ShortcutStory[]> {
+    const stories: ShortcutStory[] = [];
+    let offset = 0;
+
+    while (true) {
+      await this.checkRateLimit();
+      const response = await this.client.get<ShortcutStory[]>(
+        `/groups/${teamId}/stories`,
+        {
+          params: { limit: batchSize, offset },
+        }
+      );
+
+      const batch = Array.isArray(response.data) ? response.data : [];
+      stories.push(...batch);
+
+      if (batch.length < batchSize) {
+        break;
+      }
+
+      offset += batch.length;
+    }
+
+    return stories;
+  }
+
+  private buildStoriesSearchParams(
+    batchSize: number,
+    nextToken?: string
+  ): Record<string, string> {
+    const params = new URLSearchParams();
+    params.set('query', '*');
+    params.set('entity_types', 'story');
+    params.set('page_size', String(batchSize));
+
+    if (!nextToken) {
+      return Object.fromEntries(params.entries());
+    }
+
+    let candidate = nextToken.trim();
+
+    if (candidate.startsWith('http://') || candidate.startsWith('https://')) {
+      const parsed = new URL(candidate);
+      candidate = parsed.search.startsWith('?')
+        ? parsed.search.slice(1)
+        : parsed.search;
+    } else if (candidate.startsWith('/')) {
+      const queryStart = candidate.indexOf('?');
+      candidate = queryStart >= 0 ? candidate.slice(queryStart + 1) : '';
+    }
+
+    if (candidate.includes('=')) {
+      const parsed = new URLSearchParams(candidate);
+      parsed.forEach((value, key) => params.set(key, value));
+    } else if (candidate) {
+      params.set('next', candidate);
+    }
+
+    return Object.fromEntries(params.entries());
   }
 
   // Comments

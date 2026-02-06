@@ -34,8 +34,8 @@ export class LinearClient {
     const isBrowser = typeof window !== 'undefined';
     this.client = new LinearSDK(
       isBrowser
-        ? { accessToken, apiUrl: '/api/linear/graphql' }
-        : { accessToken }
+        ? { apiKey: accessToken, apiUrl: '/api/linear/graphql' }
+        : { apiKey: accessToken }
     );
   }
 

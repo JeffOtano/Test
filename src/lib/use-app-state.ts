@@ -8,6 +8,8 @@ import {
   STORAGE_STATE_CHANGE_EVENT,
 } from './db';
 
+const EMPTY_STATE: AppState = {};
+
 function subscribe(onStoreChange: () => void): () => void {
   if (typeof window === 'undefined') {
     return () => {};
@@ -29,7 +31,7 @@ function subscribe(onStoreChange: () => void): () => void {
 }
 
 function getServerSnapshot(): AppState {
-  return {};
+  return EMPTY_STATE;
 }
 
 export function useAppState(): AppState {
@@ -39,5 +41,5 @@ export function useAppState(): AppState {
     () => false
   );
   const snapshot = useSyncExternalStore(subscribe, getState, getServerSnapshot);
-  return hydrated ? snapshot : {};
+  return hydrated ? snapshot : EMPTY_STATE;
 }

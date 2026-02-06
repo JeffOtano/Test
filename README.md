@@ -124,6 +124,7 @@ Behavior:
 - If webhook secrets are configured, unsigned/invalid webhook deliveries are rejected.
 - Linear signed events must include a fresh `webhookTimestamp`.
 - Replay attempts are rejected within a rolling TTL window.
+- Webhook endpoints enforce per-IP rate limiting to reduce abuse and burst failures.
 - If `GOODBYE_*` credentials are configured, per-request token headers are optional.
 
 ---

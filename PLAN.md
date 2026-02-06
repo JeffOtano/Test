@@ -252,6 +252,7 @@ npm start
 - Same-origin proxy routes for browser API compatibility
 - Optional webhook-triggered sync with signed delivery verification
 - Replay protection for signed webhook deliveries
+- Per-IP webhook rate limiting
 - Optional server-side webhook credentials via `GOODBYE_*` env vars
 - Response hardening via timeout handling and secure HTTP headers
 

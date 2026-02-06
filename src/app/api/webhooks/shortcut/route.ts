@@ -10,9 +10,12 @@ import {
 } from '@/lib/sync/webhook-config';
 import { runSyncCycle } from '@/lib/sync/service';
 import { consumeReplayKey, verifyHmacSha256Signature } from '@/lib/security/webhooks';
+import { consumeRateLimit, getClientIp } from '@/lib/security/rate-limit';
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 const WEBHOOK_REPLAY_TTL_MS = 10 * 60 * 1000;
+const WEBHOOK_RATE_LIMIT = 240;
+const WEBHOOK_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
 function parseBody(rawBody: string): WebhookBody {
   if (!rawBody.trim()) return {};
@@ -37,6 +40,29 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest): Promise<Response> {
+  const clientIp = getClientIp(request.headers);
+  const rateLimit = consumeRateLimit({
+    key: `shortcut:${clientIp}`,
+    limit: WEBHOOK_RATE_LIMIT,
+    windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+  });
+
+  if (!rateLimit.allowed) {
+    return Response.json(
+      {
+        success: false,
+        error: 'Rate limit exceeded',
+      },
+      {
+        status: 429,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)),
+        },
+      }
+    );
+  }
+
   const rawBody = await request.text();
   if (rawBody.length > MAX_WEBHOOK_BODY_BYTES) {
     return Response.json(

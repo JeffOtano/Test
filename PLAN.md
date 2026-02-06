@@ -269,6 +269,14 @@ MIT License - permissive, enterprise-friendly
 3. Make your changes
 4. Submit a pull request
 
+### Governance and Operations
+- `CODE_OF_CONDUCT.md` for community standards
+- `SECURITY.md` for vulnerability disclosure policy
+- `SUPPORT.md` for triage/support guidance
+- GitHub issue templates and PR template for consistent reports
+- Dependabot and dependency review workflow for supply-chain hygiene
+- CI quality gate and release workflow for maintainable shipping
+
 ---
 
 ## Current Status

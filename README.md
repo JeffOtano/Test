@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/JeffOtano/goodbye-shortcut/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/JeffOtano/goodbye-shortcut/actions/workflows/ci.yml/badge.svg" />
+  </a>
+  <a href="https://github.com/JeffOtano/goodbye-shortcut/actions/workflows/codeql.yml">
+    <img alt="CodeQL" src="https://github.com/JeffOtano/goodbye-shortcut/actions/workflows/codeql.yml/badge.svg" />
+  </a>
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-features">Features</a> •
   <a href="#-how-it-works">How It Works</a> •
@@ -49,6 +55,12 @@ Then open [localhost:3000](http://localhost:3000):
 4. Click migrate
 
 **That's it.**
+
+For production webhook mode, copy environment variables:
+
+```bash
+cp .env.example .env.local
+```
 
 To verify production readiness locally:
 
@@ -200,6 +212,11 @@ git push origin my-feature
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+Project standards:
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+- [Support](SUPPORT.md)
 
 ---
 

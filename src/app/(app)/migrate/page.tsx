@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   ArrowLeft,
@@ -17,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import {
+  getMigrationHistory,
   getMigrationSettings,
   setMigrationSettings,
   setState,
@@ -59,7 +61,6 @@ const modes: Array<{
     title: 'Real-Time Sync',
     description: 'Bidirectional sync between tools',
     icon: RefreshCw,
-    disabled: true,
   },
 ];
 
@@ -81,9 +82,39 @@ function formatUiError(error: unknown): string {
   return 'Unexpected error. Please retry.';
 }
 
+function downloadMigrationReport(
+  result: MigrationResult,
+  options: {
+    mode: SelectableMode;
+    shortcutTeamId?: string;
+    linearTeamId: string;
+    includeComments: boolean;
+    includeAttachments: boolean;
+    dryRun: boolean;
+  }
+): void {
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    migration: result,
+    options,
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `goodbye-shortcut-report-${result.completedAt.slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function MigratePage() {
+  const router = useRouter();
   const appState = useAppState();
   const persistedSettings = getMigrationSettings(appState);
+  const migrationHistory = getMigrationHistory(appState);
   const hasTokens = Boolean(appState.shortcutToken && appState.linearToken);
 
   const [step, setStep] = useState(0);
@@ -171,7 +202,32 @@ export default function MigratePage() {
         setState({ linearTeamId: nextTeamId });
       }
     } catch (error) {
-      setPreview(null);
+      const fallbackShortcutTeams =
+        appState.shortcutTeams?.map((team) => {
+          const parsedTeamId = Number.parseInt(team.id, 10);
+          return {
+            id: Number.isFinite(parsedTeamId) ? parsedTeamId : 0,
+            name: team.name,
+            description: '',
+            workflow_ids: [],
+          };
+        }) ?? [];
+      const fallbackTeams =
+        appState.linearTeams?.map((team) => ({
+          id: team.id,
+          key: team.key,
+          name: team.name,
+          description: '',
+        })) ?? [];
+
+      setPreview({
+        stories: 0,
+        epics: 0,
+        iterations: 0,
+        labels: 0,
+        shortcutTeams: fallbackShortcutTeams,
+        teams: fallbackTeams,
+      });
       setPreviewError(formatUiError(error));
     } finally {
       setLoading(false);
@@ -183,7 +239,7 @@ export default function MigratePage() {
     await loadPreview();
   }
 
-  async function startMigration(): Promise<void> {
+  async function startMigration(retryStoryIds?: number[]): Promise<void> {
     if (!canStartMigration) return;
 
     setStep(2);
@@ -213,6 +269,7 @@ export default function MigratePage() {
           includeComments,
           includeAttachments,
           dryRun,
+          retryStoryIds,
         },
         (nextProgress) => {
           setProgress(nextProgress);
@@ -296,9 +353,15 @@ export default function MigratePage() {
             {modes.map((entry) => (
               <div
                 key={entry.id}
-                onClick={() =>
-                  !entry.disabled && setModeOverride(entry.id as SelectableMode)
-                }
+                onClick={() => {
+                  if (entry.id === 'REAL_TIME_SYNC') {
+                    router.push('/sync');
+                    return;
+                  }
+                  if (!entry.disabled) {
+                    setModeOverride(entry.id as SelectableMode);
+                  }
+                }}
                 className={cn(
                   'flex items-center gap-4 rounded-lg border p-4 transition-colors',
                   entry.disabled
@@ -348,6 +411,13 @@ export default function MigratePage() {
               </div>
             ) : preview ? (
               <div className="space-y-6">
+                {previewError && (
+                  <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-sm text-muted-foreground">
+                    Preview data could not be fully loaded. Using saved team metadata only.
+                    Error: {previewError}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="rounded-lg border p-4 text-center">
                     <div className="text-3xl font-bold">{preview.stories}</div>
@@ -481,7 +551,7 @@ export default function MigratePage() {
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back
                   </Button>
-                  <Button onClick={startMigration} disabled={!canStartMigration}>
+                  <Button onClick={() => startMigration()} disabled={!canStartMigration}>
                     Start Migration <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </div>
@@ -623,12 +693,65 @@ export default function MigratePage() {
                 <Button variant="outline" onClick={() => setStep(1)}>
                   Run Again
                 </Button>
+                {result.retryStoryIds.length > 0 && (
+                  <Button
+                    variant="outline"
+                    onClick={() => startMigration(result.retryStoryIds)}
+                  >
+                    Retry Failed Stories
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    downloadMigrationReport(result, {
+                      mode,
+                      shortcutTeamId:
+                        mode === 'TEAM_BY_TEAM' ? selectedShortcutTeamId : undefined,
+                      linearTeamId: selectedTeamId,
+                      includeComments,
+                      includeAttachments,
+                      dryRun,
+                    })
+                  }
+                >
+                  Download Report
+                </Button>
                 <Button asChild>
                   <a href="https://linear.app" target="_blank" rel="noopener noreferrer">
                     Open Linear
                   </a>
                 </Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {migrationHistory.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Recent Migration Runs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3 text-sm">
+              {migrationHistory.slice(0, 8).map((entry) => (
+                <div
+                  key={entry.id}
+                  className="rounded-lg border p-3 text-muted-foreground"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-foreground">
+                      {entry.mode} · {entry.success ? 'Success' : 'Completed with errors'}
+                    </span>
+                    <span>{new Date(entry.completedAt).toLocaleString()}</span>
+                  </div>
+                  <div className="mt-1 text-xs">
+                    Duration {(entry.durationMs / 1000).toFixed(1)}s · Issues attempted{' '}
+                    {entry.stats.issues.attempted} · Failed {entry.stats.issues.failed}
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>

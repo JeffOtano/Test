@@ -120,7 +120,7 @@ export class ShortcutClient {
     return response.data;
   }
 
-  async getTeam(teamId: number): Promise<ShortcutTeam> {
+  async getTeam(teamId: string | number): Promise<ShortcutTeam> {
     await this.checkRateLimit();
     const response = await this.client.get(`/groups/${teamId}`);
     return response.data;
@@ -191,6 +191,40 @@ export class ShortcutClient {
   async getStory(storyId: number): Promise<ShortcutStory> {
     await this.checkRateLimit();
     const response = await this.client.get(`/stories/${storyId}`);
+    return response.data;
+  }
+
+  async createStory(params: {
+    name: string;
+    description?: string;
+    story_type?: ShortcutStory['story_type'];
+    workflow_state_id: number;
+    estimate?: number;
+    project_id?: number;
+    iteration_id?: number;
+    owner_ids?: string[];
+  }): Promise<ShortcutStory> {
+    await this.checkRateLimit();
+    const response = await this.client.post('/stories', params);
+    return response.data;
+  }
+
+  async updateStory(
+    storyId: number,
+    params: Partial<{
+      name: string;
+      description: string;
+      story_type: ShortcutStory['story_type'];
+      workflow_state_id: number;
+      estimate: number;
+      project_id: number;
+      iteration_id: number;
+      owner_ids: string[];
+      archived: boolean;
+    }>
+  ): Promise<ShortcutStory> {
+    await this.checkRateLimit();
+    const response = await this.client.put(`/stories/${storyId}`, params);
     return response.data;
   }
 

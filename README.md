@@ -50,6 +50,15 @@ Then open [localhost:3000](http://localhost:3000):
 
 **That's it.**
 
+To verify production readiness locally:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test:run
+npm run build
+```
+
 ---
 
 ## ✨ Features
@@ -60,7 +69,7 @@ Then open [localhost:3000](http://localhost:3000):
 |------|-------------|----------|
 | **One-Shot** | Migrate everything at once | Teams ready to switch |
 | **Team-by-Team** | Migrate gradually | Large organizations |
-| **Real-Time Sync** | Planned | Future releases |
+| **Real-Time Sync** | Live bidirectional synchronization | Parallel rollout and cutover |
 
 ### What Gets Migrated
 
@@ -80,6 +89,42 @@ Then open [localhost:3000](http://localhost:3000):
 - Idempotent re-runs that reuse existing Labels/Projects/Cycles/Issues when possible
 - Per-entity stats and error reporting (attempted/created/reused/failed)
 - Team-targeted runs for staged migration rollout
+- Persisted migration history and downloadable JSON run reports
+- Retry failed stories directly from migration results
+
+### Real-Time Sync
+
+- Dedicated Sync dashboard at `/sync` with start/pause/resume/stop controls
+- Direction modes: `Shortcut -> Linear`, `Linear -> Shortcut`, `Bidirectional`
+- Conflict policies: `Newest Wins`, `Shortcut Wins`, `Linear Wins`, `Manual`
+- Cursor-based incremental sync using `updated_at` and `updatedAt`
+- Continuous polling sync engine with configurable interval
+- Signed webhook verification with replay protection (when webhook secrets are configured)
+- Webhook trigger endpoints:
+  - `POST /api/webhooks/shortcut`
+  - `POST /api/webhooks/linear`
+
+---
+
+## 🔐 Production Webhook Security
+
+For production, configure webhook secrets and run sync with server-side credentials:
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `GOODBYE_SHORTCUT_TOKEN` | Yes (for webhook-only operation) | Shortcut API token for sync jobs |
+| `GOODBYE_LINEAR_TOKEN` | Yes (for webhook-only operation) | Linear API key for sync jobs |
+| `GOODBYE_LINEAR_TEAM_ID` | Yes (for webhook-only operation) | Target Linear team |
+| `GOODBYE_SHORTCUT_WEBHOOK_SECRET` | Recommended | Verifies Shortcut `Payload-Signature` |
+| `GOODBYE_LINEAR_WEBHOOK_SECRET` | Recommended | Verifies Linear `Linear-Signature` |
+| `GOODBYE_WEBHOOK_SHARED_SECRET` | Optional | Shared fallback secret for both providers |
+| `GOODBYE_LINEAR_WEBHOOK_TOLERANCE_MS` | Optional | Timestamp drift tolerance for Linear signed events (default: 300000ms) |
+
+Behavior:
+- If webhook secrets are configured, unsigned/invalid webhook deliveries are rejected.
+- Linear signed events must include a fresh `webhookTimestamp`.
+- Replay attempts are rejected within a rolling TTL window.
+- If `GOODBYE_*` credentials are configured, per-request token headers are optional.
 
 ---
 

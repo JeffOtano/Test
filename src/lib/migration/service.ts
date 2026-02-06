@@ -1,4 +1,4 @@
-import { getState } from '../db';
+import { appendMigrationHistory, getState } from '../db';
 import { LinearClient } from '../linear/client';
 import { ShortcutClient } from '../shortcut/client';
 import { LinearTeam, ShortcutComment, ShortcutStory, ShortcutTeam } from '@/types';
@@ -35,6 +35,7 @@ export interface MigrationResult {
   startedAt: string;
   completedAt: string;
   durationMs: number;
+  retryStoryIds: number[];
   stats: {
     labels: EntityStats;
     projects: EntityStats;
@@ -54,12 +55,14 @@ export interface RunMigrationOptions {
   includeComments: boolean;
   includeAttachments: boolean;
   dryRun: boolean;
+  retryStoryIds?: number[];
 }
 
 export interface TokenValidationResult {
   shortcut: boolean;
   linear: boolean;
   shortcutUserName?: string;
+  shortcutTeams: ShortcutTeam[];
   linearUserName?: string;
   linearWorkspace?: string;
   linearTeams: LinearTeam[];
@@ -98,6 +101,7 @@ function createInitialResult(startedAt: Date, dryRun: boolean): MigrationResult 
     startedAt: startedAt.toISOString(),
     completedAt: startedAt.toISOString(),
     durationMs: 0,
+    retryStoryIds: [],
     stats: {
       labels: createEntityStats(),
       projects: createEntityStats(),
@@ -271,12 +275,58 @@ function extractExternalLinks(story: ShortcutStory): Array<{ title: string; url:
   return links;
 }
 
+function extractRetryStoryIds(errors: string[]): number[] {
+  const storyIds = new Set<number>();
+  const patterns = [/\(#(\d+)\)/g, /story\s+#?(\d+)/gi, /Shortcut Story ID:\s*(\d+)/gi];
+
+  for (const error of errors) {
+    for (const pattern of patterns) {
+      let match = pattern.exec(error);
+      while (match) {
+        const parsed = Number.parseInt(match[1], 10);
+        if (Number.isFinite(parsed)) {
+          storyIds.add(parsed);
+        }
+        match = pattern.exec(error);
+      }
+      pattern.lastIndex = 0;
+    }
+  }
+
+  return Array.from(storyIds).sort((a, b) => a - b);
+}
+
 function finalizeResult(result: MigrationResult, startedAt: Date): MigrationResult {
   const completedAt = new Date();
   result.completedAt = completedAt.toISOString();
   result.durationMs = completedAt.getTime() - startedAt.getTime();
   result.success = result.errors.length === 0;
+  result.retryStoryIds = extractRetryStoryIds(result.errors);
   return result;
+}
+
+function persistMigrationHistory(
+  result: MigrationResult,
+  options: RunMigrationOptions
+): void {
+  if (typeof window === 'undefined') return;
+
+  appendMigrationHistory({
+    id: crypto.randomUUID(),
+    mode: options.mode,
+    shortcutTeamId: options.shortcutTeamId,
+    linearTeamId: options.linearTeamId,
+    includeComments: options.includeComments,
+    includeAttachments: options.includeAttachments,
+    dryRun: options.dryRun,
+    startedAt: result.startedAt,
+    completedAt: result.completedAt,
+    durationMs: result.durationMs,
+    success: result.success,
+    stats: result.stats,
+    errors: result.errors,
+    warnings: result.warnings,
+  });
 }
 
 function markPlannedOrCreated(stats: EntityStats, dryRun: boolean): void {
@@ -356,12 +406,23 @@ export async function runMigration(
         ? shortcut.getStoriesForTeam(options.shortcutTeamId)
         : shortcut.getAllStories();
 
-    const [labels, epics, iterations, stories] = await Promise.all([
+    const [labels, epics, iterations, fetchedStories] = await Promise.all([
       shortcut.getLabels(),
       shortcut.getEpics(),
       shortcut.getIterations(),
       storiesPromise,
     ]);
+
+    let stories = fetchedStories;
+
+    if (options.retryStoryIds && options.retryStoryIds.length > 0) {
+      const retryStoryIdSet = new Set(options.retryStoryIds);
+      stories = fetchedStories.filter((story) => retryStoryIdSet.has(story.id));
+
+      result.warnings.push(
+        `Retry mode enabled: processing ${stories.length}/${fetchedStories.length} stories selected from previous failures.`
+      );
+    }
 
     const labelMap = new Map<number, string>();
     const existingLabelByName = new Map<string, string>();
@@ -687,6 +748,7 @@ export async function runMigration(
     }
 
     const finalized = finalizeResult(result, startedAt);
+    persistMigrationHistory(finalized, options);
     onProgress({
       phase: 'done',
       current: 1,
@@ -706,7 +768,9 @@ export async function runMigration(
       total: 0,
       message: formatError(error),
     });
-    return finalizeResult(result, startedAt);
+    const finalized = finalizeResult(result, startedAt);
+    persistMigrationHistory(finalized, options);
+    return finalized;
   }
 }
 
@@ -721,6 +785,7 @@ export async function validateTokens(tokens?: {
   const result: TokenValidationResult = {
     shortcut: false,
     linear: false,
+    shortcutTeams: [],
     linearTeams: [],
     errors: [],
   };
@@ -739,9 +804,13 @@ export async function validateTokens(tokens?: {
 
   try {
     const shortcutClient = new ShortcutClient(shortcutToken);
-    const member = await shortcutClient.getCurrentMember();
+    const [member, teams] = await Promise.all([
+      shortcutClient.getCurrentMember(),
+      shortcutClient.getTeams(),
+    ]);
     result.shortcut = true;
     result.shortcutUserName = member.profile?.name ?? undefined;
+    result.shortcutTeams = teams;
   } catch (error) {
     result.errors.push(
       `Shortcut token validation failed: ${withNetworkHint(formatError(error))}`

@@ -9,6 +9,7 @@ import {
   LinearWorkflowState,
   LinearWorkspace,
 } from '@/types';
+import { normalizeLinearApiKey } from '@/lib/security/tokens';
 
 interface PaginatableConnection<T> {
   fetchNext: () => Promise<unknown>;
@@ -31,11 +32,12 @@ export class LinearClient {
   private client: LinearSDK;
 
   constructor(accessToken: string) {
+    const normalizedAccessToken = normalizeLinearApiKey(accessToken);
     const isBrowser = typeof window !== 'undefined';
     this.client = new LinearSDK(
       isBrowser
-        ? { apiKey: accessToken, apiUrl: '/api/linear/graphql' }
-        : { apiKey: accessToken }
+        ? { apiKey: normalizedAccessToken, apiUrl: '/api/linear/graphql' }
+        : { apiKey: normalizedAccessToken }
     );
   }
 
@@ -351,6 +353,47 @@ export class LinearClient {
       labels: [],
       createdAt: toIsoString(issue.createdAt),
       updatedAt: toIsoString(issue.updatedAt),
+    };
+  }
+
+  async updateIssue(
+    issueId: string,
+    params: Partial<{
+      title: string;
+      description: string;
+      stateId: string;
+      assigneeId: string;
+      projectId: string;
+      cycleId: string;
+      labelIds: string[];
+      priority: number;
+      estimate: number;
+    }>
+  ): Promise<LinearIssue> {
+    const result = await this.client.updateIssue(issueId, params);
+    const issue = await result.issue;
+    if (!issue) throw new Error('Failed to update issue');
+
+    const state = await issue.state;
+    return {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      description: issue.description ?? undefined,
+      state: state
+        ? {
+            id: state.id,
+            name: state.name,
+            type: state.type as LinearWorkflowState['type'],
+            position: state.position,
+          }
+        : { id: '', name: 'Unknown', type: 'backlog', position: 0 },
+      priority: issue.priority,
+      estimate: issue.estimate ?? undefined,
+      labels: [],
+      createdAt: toIsoString(issue.createdAt),
+      updatedAt: toIsoString(issue.updatedAt),
+      completedAt: issue.completedAt ? toIsoString(issue.completedAt) : undefined,
     };
   }
 

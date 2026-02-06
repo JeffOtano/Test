@@ -33,5 +33,11 @@ function getServerSnapshot(): AppState {
 }
 
 export function useAppState(): AppState {
-  return useSyncExternalStore(subscribe, getState, getServerSnapshot);
+  const hydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+  const snapshot = useSyncExternalStore(subscribe, getState, getServerSnapshot);
+  return hydrated ? snapshot : {};
 }

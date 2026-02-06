@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   ArrowRightLeft,
+  Activity,
   Settings,
   Zap,
 } from 'lucide-react';
@@ -12,6 +13,7 @@ import {
 const navigation = [
   { name: 'Setup', href: '/setup', icon: Settings },
   { name: 'Migrate', href: '/migrate', icon: ArrowRightLeft },
+  { name: 'Sync', href: '/sync', icon: Activity },
 ];
 
 export function Sidebar() {

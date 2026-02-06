@@ -15,13 +15,18 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { setState, StoredLinearTeam } from '@/lib/db';
+import { setState, StoredLinearTeam, StoredShortcutTeam } from '@/lib/db';
 import { validateTokens } from '@/lib/migration/service';
+import { normalizeLinearApiKey } from '@/lib/security/tokens';
 import { useAppState } from '@/lib/use-app-state';
 
 type ValidationState = 'idle' | 'validating' | 'success' | 'error';
 
 function sanitizeTeams(teams: StoredLinearTeam[]): StoredLinearTeam[] {
+  return [...teams].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function sanitizeShortcutTeams(teams: StoredShortcutTeam[]): StoredShortcutTeam[] {
   return [...teams].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -61,7 +66,7 @@ export default function SetupPage() {
     setSaved(false);
 
     const normalizedShortcutToken = shortcutToken.trim();
-    const normalizedLinearToken = linearToken.trim();
+    const normalizedLinearToken = normalizeLinearApiKey(linearToken);
 
     const validation = await validateTokens({
       shortcutToken: normalizedShortcutToken,
@@ -85,11 +90,23 @@ export default function SetupPage() {
         name: team.name,
       }))
     );
+    const shortcutTeams = sanitizeShortcutTeams(
+      validation.shortcutTeams.map((team) => ({
+        id: String(team.id),
+        name: team.name,
+      }))
+    );
 
     const currentSelectedTeamId = persistedState.linearTeamId;
     const selectedTeamId = teams.some((team) => team.id === currentSelectedTeamId)
       ? currentSelectedTeamId
       : teams[0]?.id;
+    const currentShortcutTeamId = persistedState.shortcutTeamId;
+    const selectedShortcutTeamId = shortcutTeams.some(
+      (team) => team.id === currentShortcutTeamId
+    )
+      ? currentShortcutTeamId
+      : shortcutTeams[0]?.id;
 
     setState({
       shortcutToken: normalizedShortcutToken,
@@ -97,6 +114,8 @@ export default function SetupPage() {
       shortcutUserName: validation.shortcutUserName,
       linearUserName: validation.linearUserName,
       linearWorkspace: validation.linearWorkspace,
+      shortcutTeams,
+      shortcutTeamId: selectedShortcutTeamId,
       linearTeams: teams,
       linearTeamId: selectedTeamId,
       migrationMode: persistedState.migrationMode ?? 'ONE_SHOT',
@@ -184,7 +203,7 @@ export default function SetupPage() {
               <div>
                 <CardTitle className="text-lg">Linear API Key</CardTitle>
                 <CardDescription>
-                  Get your key from Linear settings
+                  Get your key from Linear settings (Bearer prefix is optional)
                 </CardDescription>
               </div>
               {linearToken && (

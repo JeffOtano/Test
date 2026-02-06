@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 
 const SHORTCUT_API_BASE = 'https://api.app.shortcut.com/api/v3';
+const SHORTCUT_PROXY_TIMEOUT_MS = 30_000;
 
 function buildShortcutUrl(pathSegments: string[], search: string): string {
   const path = pathSegments.join('/');
@@ -45,13 +46,33 @@ async function proxyShortcut(
   const method = request.method;
   const hasBody = method !== 'GET' && method !== 'HEAD';
   const body = hasBody ? await request.text() : undefined;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SHORTCUT_PROXY_TIMEOUT_MS);
+  let upstreamResponse: Response;
 
-  const upstreamResponse = await fetch(upstreamUrl, {
-    method,
-    headers: buildProxyHeaders(request, token),
-    body,
-    cache: 'no-store',
-  });
+  try {
+    upstreamResponse = await fetch(upstreamUrl, {
+      method,
+      headers: buildProxyHeaders(request, token),
+      body,
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return Response.json(
+        { error: 'Shortcut API request timed out' },
+        { status: 504, headers: { 'Cache-Control': 'no-store' } }
+      );
+    }
+
+    return Response.json(
+      { error: 'Failed to reach Shortcut API' },
+      { status: 502, headers: { 'Cache-Control': 'no-store' } }
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const responseHeaders = new Headers();
   const passthroughHeaders = [

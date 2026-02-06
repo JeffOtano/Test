@@ -27,9 +27,9 @@ This is a **client-first, database-free** open-source tool:
 │                        Frontend (Next.js)                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
 │  │  Landing    │  │  Dashboard  │  │  Migration Wizard       │  │
-│  │  Page       │  │             │  │  - Connect accounts     │  │
+│  │  Page       │  │             │  │  - Validate API tokens  │  │
 │  │             │  │  - Status   │  │  - Select mode          │  │
-│  │             │  │  - History  │  │  - Map fields           │  │
+│  │             │  │  - History  │  │  - Configure scope      │  │
 │  │             │  │  - Logs     │  │  - Preview & execute    │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
@@ -46,11 +46,11 @@ This is a **client-first, database-free** open-source tool:
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| Frontend | Next.js 14 (App Router) | React framework with SSR |
+| Frontend | Next.js 16 (App Router) | React framework with SSR |
 | Styling | Tailwind CSS + shadcn/ui | Modern, accessible UI |
-| State | Zustand + localStorage | Client-side state management |
-| Auth | NextAuth.js | OAuth for Shortcut & Linear |
-| Storage | Browser localStorage | Token & migration state storage |
+| State | useSyncExternalStore + localStorage | Client-side state management |
+| Auth | API key/token validation flow | Direct provider API access |
+| Storage | Browser localStorage | Token, migration, and sync state storage |
 
 ---
 
@@ -67,7 +67,7 @@ This is a **client-first, database-free** open-source tool:
 | Epic | Project or Label | Configurable |
 | Iteration | Cycle | Sprint equivalent |
 | Label | Label | Direct mapping |
-| Workflow State | Workflow State | Requires mapping |
+| Workflow State | Workflow State | Not directly mapped in v1 |
 | Member | User | By email matching |
 | Comment | Comment | Preserve history |
 | Attachment | Attachment | Re-upload required |
@@ -76,33 +76,17 @@ This is a **client-first, database-free** open-source tool:
 
 ```typescript
 // Stored in localStorage
-
-interface StoredTokens {
-  shortcut?: {
-    accessToken: string;
-    workspaceId?: string;
-    workspaceName?: string;
-  };
-  linear?: {
-    accessToken: string;
-    workspaceId?: string;
-    workspaceName?: string;
-  };
-}
-
-interface MigrationRecord {
-  id: string;
-  mode: 'ONE_SHOT' | 'TEAM_BY_TEAM' | 'REAL_TIME_SYNC';
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  config: MigrationConfig;
-  progress: {
-    total: number;
-    completed: number;
-    failed: number;
-  };
-  logs: MigrationLog[];
-  startedAt: string;
-  completedAt?: string;
+interface AppState {
+  shortcutToken?: string;
+  linearToken?: string;
+  shortcutTeams?: Array<{ id: string; name: string }>;
+  linearTeams?: Array<{ id: string; key: string; name: string }>;
+  migrationHistory?: MigrationHistoryRecord[];
+  syncSettings?: Partial<SyncSettings>;
+  syncStatus?: 'IDLE' | 'RUNNING' | 'PAUSED' | 'ERROR';
+  syncCursors?: { shortcutUpdatedAt?: string; linearUpdatedAt?: string };
+  syncStats?: Partial<SyncStats>;
+  syncEvents?: SyncEventRecord[];
 }
 ```
 
@@ -112,45 +96,47 @@ interface MigrationRecord {
 
 ### Phase 1: Foundation (Complete)
 
-- [x] Project setup with Next.js 14
+- [x] Project setup with Next.js 16
 - [x] Landing page with feature overview
 - [x] shadcn/ui components
 - [x] App layout with sidebar navigation
-- [x] Dashboard page
 - [x] Migration wizard UI
-- [x] Sync configuration page
-- [x] Settings page
-- [x] Login page
+- [x] Setup and token validation flow
+- [x] Sync dashboard page
 
 ### Phase 2: API Integration
 
 - [x] Shortcut API client
 - [x] Linear API client (using @linear/sdk)
-- [ ] OAuth flow implementation
-- [ ] Token storage in localStorage
+- [x] Same-origin API proxy routes
+- [x] Token storage in localStorage
+- [x] Token validation and bootstrap metadata loading
 
 ### Phase 3: One-Shot Migration
 
-- [ ] Fetch all data from Shortcut
-- [ ] Transform data to Linear format
-- [ ] Import data to Linear
-- [ ] Progress tracking UI
-- [ ] Error handling and retry
-- [ ] Migration report generation
+- [x] Fetch all data from Shortcut
+- [x] Transform data to Linear format
+- [x] Import data to Linear
+- [x] Progress tracking UI
+- [x] Error handling and retry
+- [x] Migration report generation
 
 ### Phase 4: Team-by-Team Migration
 
-- [ ] Team selection UI
-- [ ] Per-team migration
-- [ ] Pause/resume functionality
-- [ ] Progress per team
+- [x] Team selection UI
+- [x] Per-team migration
+- [x] Pause/resume controls for continuous operations
+- [x] Progress and history tracking per run
 
 ### Phase 5: Real-Time Sync
 
-- [ ] Webhook endpoints
-- [ ] Bidirectional sync logic
-- [ ] Conflict detection
-- [ ] Sync status dashboard
+- [x] Webhook endpoints
+- [x] Bidirectional sync logic
+- [x] Conflict detection
+- [x] Sync status dashboard
+- [x] Signed webhook verification with replay protection
+- [x] Environment-based webhook credentials for production deployments
+- [x] Sync persistence (status/cursors/stats/events) in localStorage
 
 ---
 
@@ -221,9 +207,9 @@ class LinearClient {
 
 ### Migration Wizard Steps
 
-1. **Connect** - OAuth into Shortcut and Linear
+1. **Setup** - Enter and validate Shortcut + Linear API tokens
 2. **Mode** - Choose migration type
-3. **Mapping** - Configure field mappings
+3. **Configure** - Select teams and migration options
 4. **Preview** - Review what will be migrated
 5. **Migrate** - Execute with live progress
 6. **Complete** - Summary and next steps
@@ -238,12 +224,12 @@ class LinearClient {
 # Deploy to Vercel
 vercel deploy
 
-# Set environment variables in Vercel dashboard
-NEXTAUTH_SECRET=xxx
-SHORTCUT_CLIENT_ID=xxx
-SHORTCUT_CLIENT_SECRET=xxx
-LINEAR_CLIENT_ID=xxx
-LINEAR_CLIENT_SECRET=xxx
+# Optional production webhook environment variables
+GOODBYE_SHORTCUT_TOKEN=xxx
+GOODBYE_LINEAR_TOKEN=xxx
+GOODBYE_LINEAR_TEAM_ID=xxx
+GOODBYE_SHORTCUT_WEBHOOK_SECRET=xxx
+GOODBYE_LINEAR_WEBHOOK_SECRET=xxx
 ```
 
 ### Self-Hosted
@@ -254,21 +240,20 @@ npm run build
 
 # Start
 npm start
-
-# Or use Docker
-docker build -t goodbye-shortcut .
-docker run -p 3000:3000 goodbye-shortcut
 ```
 
 ---
 
 ## Security
 
-- OAuth tokens stored in encrypted localStorage
+- API tokens stored in localStorage on the client
 - Tokens transmitted via HTTPS only
-- No server-side token storage
-- Session-based authentication with NextAuth.js
-- CSRF protection built-in
+- No server-side token persistence
+- Same-origin proxy routes for browser API compatibility
+- Optional webhook-triggered sync with signed delivery verification
+- Replay protection for signed webhook deliveries
+- Optional server-side webhook credentials via `GOODBYE_*` env vars
+- Response hardening via timeout handling and secure HTTP headers
 
 ---
 
@@ -292,12 +277,14 @@ MIT License - permissive, enterprise-friendly
 - [x] UI components and pages
 - [x] API client libraries
 - [x] State management
+- [x] Migration engine
+- [x] Team-by-team migration
+- [x] Real-time sync engine
+- [x] Webhook trigger endpoints
+- [x] Webhook signature verification + replay protection
+- [x] CI quality gate (lint/typecheck/test/build)
 
-### In Progress
-- [ ] OAuth implementation
-- [ ] Migration engine
-
-### Planned
-- [ ] Team-by-team migration
-- [ ] Real-time sync
-- [ ] Docker support
+### Ongoing Hardening
+- [ ] End-to-end integration tests against provider sandboxes
+- [ ] Provider webhook signature fixtures from live payload captures
+- [ ] Hosted deployment runbook and operational alerting

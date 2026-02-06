@@ -217,6 +217,8 @@ Project standards:
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security Policy](SECURITY.md)
 - [Support](SUPPORT.md)
+- [Release Process](RELEASE.md)
+- [Changelog](CHANGELOG.md)
 
 ---
 

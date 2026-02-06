@@ -276,6 +276,7 @@ MIT License - permissive, enterprise-friendly
 - GitHub issue templates and PR template for consistent reports
 - Dependabot and dependency review workflow for supply-chain hygiene
 - CI quality gate and release workflow for maintainable shipping
+- `CHANGELOG.md` and `RELEASE.md` for predictable versioned releases
 
 ---
 

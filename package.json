@@ -2,6 +2,23 @@
   "name": "goodbye-shortcut",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JeffOtano/goodbye-shortcut.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JeffOtano/goodbye-shortcut/issues"
+  },
+  "homepage": "https://github.com/JeffOtano/goodbye-shortcut#readme",
+  "keywords": [
+    "shortcut",
+    "linear",
+    "migration",
+    "sync",
+    "nextjs",
+    "typescript"
+  ],
   "packageManager": "npm@10",
   "engines": {
     "node": ">=20 <23",

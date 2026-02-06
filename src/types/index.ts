@@ -45,7 +45,7 @@ export interface ShortcutIteration {
 export interface ShortcutStory {
   id: number;
   name: string;
-  description: string;
+  description?: string | null;
   story_type: 'feature' | 'bug' | 'chore';
   workflow_state_id: number;
   epic_id?: number;
@@ -57,7 +57,14 @@ export interface ShortcutStory {
   updated_at: string;
   completed_at?: string;
   estimate?: number;
-  external_links: string[];
+  external_links: Array<
+    | string
+    | {
+        url?: string;
+        title?: string;
+        [key: string]: unknown;
+      }
+  >;
 }
 
 export interface ShortcutLabel {

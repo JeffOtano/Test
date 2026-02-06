@@ -1,50 +1,283 @@
-import { ShortcutClient } from '../shortcut/client';
-import { LinearClient } from '../linear/client';
 import { getState } from '../db';
+import { LinearClient } from '../linear/client';
+import { ShortcutClient } from '../shortcut/client';
+import { LinearTeam, ShortcutComment, ShortcutStory } from '@/types';
+
+export type MigrationPhase =
+  | 'preflight'
+  | 'fetching'
+  | 'labels'
+  | 'projects'
+  | 'cycles'
+  | 'issues'
+  | 'comments'
+  | 'attachments'
+  | 'done'
+  | 'error';
 
 export interface MigrationProgress {
-  phase: 'fetching' | 'labels' | 'projects' | 'cycles' | 'issues' | 'comments' | 'done' | 'error';
+  phase: MigrationPhase;
   current: number;
   total: number;
   message: string;
 }
 
+export interface EntityStats {
+  attempted: number;
+  created: number;
+  reused: number;
+  failed: number;
+}
+
 export interface MigrationResult {
   success: boolean;
+  dryRun: boolean;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
   stats: {
-    labels: number;
-    projects: number;
-    cycles: number;
-    issues: number;
-    comments: number;
+    labels: EntityStats;
+    projects: EntityStats;
+    cycles: EntityStats;
+    issues: EntityStats;
+    comments: EntityStats;
+    attachments: EntityStats;
   };
   errors: string[];
+  warnings: string[];
+}
+
+export interface RunMigrationOptions {
+  linearTeamId: string;
+  mode: 'ONE_SHOT' | 'TEAM_BY_TEAM';
+  includeComments: boolean;
+  includeAttachments: boolean;
+  dryRun: boolean;
+}
+
+export interface TokenValidationResult {
+  shortcut: boolean;
+  linear: boolean;
+  shortcutUserName?: string;
+  linearUserName?: string;
+  linearWorkspace?: string;
+  linearTeams: LinearTeam[];
+  errors: string[];
+}
+
+export interface MigrationPreview {
+  stories: number;
+  epics: number;
+  iterations: number;
+  labels: number;
+  teams: LinearTeam[];
 }
 
 export type ProgressCallback = (progress: MigrationProgress) => void;
 
+interface StoryIssueMapping {
+  issueId: string;
+  story: ShortcutStory;
+}
+
+function createEntityStats(): EntityStats {
+  return {
+    attempted: 0,
+    created: 0,
+    reused: 0,
+    failed: 0,
+  };
+}
+
+function createInitialResult(startedAt: Date, dryRun: boolean): MigrationResult {
+  return {
+    success: false,
+    dryRun,
+    startedAt: startedAt.toISOString(),
+    completedAt: startedAt.toISOString(),
+    durationMs: 0,
+    stats: {
+      labels: createEntityStats(),
+      projects: createEntityStats(),
+      cycles: createEntityStats(),
+      issues: createEntityStats(),
+      comments: createEntityStats(),
+      attachments: createEntityStats(),
+    },
+    errors: [],
+    warnings: [],
+  };
+}
+
+function normalizeName(name: string | undefined | null): string {
+  return (name ?? '').trim().toLowerCase();
+}
+
+function normalizeCycleKey(name: string | undefined, start: string, end: string): string {
+  const normalizedStart = start.slice(0, 10);
+  const normalizedEnd = end.slice(0, 10);
+  return `${normalizeName(name)}|${normalizedStart}|${normalizedEnd}`;
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return 'Unknown error';
+}
+
+function extractShortcutStoryId(issue: { description?: string }): number | undefined {
+  const description = issue.description ?? '';
+  const match = description.match(/Shortcut Story ID:\s*(\d+)/i);
+  if (!match) return undefined;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function mapPriority(storyType: ShortcutStory['story_type']): number {
+  switch (storyType) {
+    case 'bug':
+      return 2;
+    case 'feature':
+      return 3;
+    case 'chore':
+    default:
+      return 4;
+  }
+}
+
+function buildIssueDescription(story: ShortcutStory): string {
+  const description = (story.description ?? '').trim();
+  const metadata = [
+    '---',
+    'Migrated from Shortcut',
+    `Shortcut Story ID: ${story.id}`,
+    `Shortcut Story Type: ${story.story_type}`,
+    `Shortcut Story URL: https://app.shortcut.com/story/${story.id}`,
+    `Shortcut Created At: ${story.created_at}`,
+    `Shortcut Updated At: ${story.updated_at}`,
+  ];
+
+  return description ? `${description}\n\n${metadata.join('\n')}` : metadata.join('\n');
+}
+
+function buildCommentBody(comment: ShortcutComment): string {
+  const metadata = [
+    'Migrated from Shortcut Comment',
+    `Shortcut Comment ID: ${comment.id}`,
+    `Author ID: ${comment.author_id}`,
+    `Created At: ${comment.created_at}`,
+  ];
+  return `${comment.text}\n\n---\n${metadata.join('\n')}`;
+}
+
+function extractExternalLinks(story: ShortcutStory): Array<{ title: string; url: string }> {
+  if (!Array.isArray(story.external_links)) return [];
+
+  const links: Array<{ title: string; url: string }> = [];
+
+  story.external_links.forEach((entry, index) => {
+    if (typeof entry === 'string' && entry.startsWith('http')) {
+      links.push({
+        title: `Shortcut Link ${index + 1}`,
+        url: entry,
+      });
+      return;
+    }
+
+    if (entry && typeof entry === 'object') {
+      const record = entry as Record<string, unknown>;
+      const urlValue =
+        (typeof record.url === 'string' && record.url) ||
+        (typeof record.external_url === 'string' && record.external_url) ||
+        (typeof record.link === 'string' && record.link) ||
+        '';
+      if (!urlValue || !urlValue.startsWith('http')) return;
+      links.push({
+        title:
+          (typeof record.title === 'string' && record.title) ||
+          `Shortcut Link ${index + 1}`,
+        url: urlValue,
+      });
+    }
+  });
+
+  return links;
+}
+
+function finalizeResult(result: MigrationResult, startedAt: Date): MigrationResult {
+  const completedAt = new Date();
+  result.completedAt = completedAt.toISOString();
+  result.durationMs = completedAt.getTime() - startedAt.getTime();
+  result.success = result.errors.length === 0;
+  return result;
+}
+
+function markPlannedOrCreated(stats: EntityStats, dryRun: boolean): void {
+  // For dry runs we intentionally show "created" as "would create" to keep a single stat model.
+  stats.created += 1;
+  if (dryRun) return;
+}
+
 export async function runMigration(
-  linearTeamId: string,
+  options: RunMigrationOptions,
   onProgress: ProgressCallback
 ): Promise<MigrationResult> {
   const state = getState();
+  const startedAt = new Date();
+  const result = createInitialResult(startedAt, options.dryRun);
 
   if (!state.shortcutToken || !state.linearToken) {
     throw new Error('Missing API tokens');
   }
 
+  if (!options.linearTeamId) {
+    throw new Error('Missing target Linear team');
+  }
+
   const shortcut = new ShortcutClient(state.shortcutToken);
   const linear = new LinearClient(state.linearToken);
 
-  const result: MigrationResult = {
-    success: false,
-    stats: { labels: 0, projects: 0, cycles: 0, issues: 0, comments: 0 },
-    errors: [],
-  };
-
   try {
-    // Phase 1: Fetch data from Shortcut
-    onProgress({ phase: 'fetching', current: 0, total: 1, message: 'Fetching data from Shortcut...' });
+    onProgress({
+      phase: 'preflight',
+      current: 0,
+      total: 1,
+      message: 'Validating target team and loading existing Linear data...',
+    });
+
+    await linear.getTeam(options.linearTeamId);
+
+    const [existingLabels, existingProjects, existingCycles, existingIssues] =
+      await Promise.all([
+        linear.getLabels(options.linearTeamId, { includeAllPages: true }),
+        linear.getProjects(options.linearTeamId, { includeAllPages: true }),
+        linear.getCycles(options.linearTeamId, { includeAllPages: true }),
+        linear.getIssues(options.linearTeamId, { includeAllPages: true }),
+      ]);
+
+    if (options.dryRun) {
+      result.warnings.push('Dry run enabled: no data will be written to Linear.');
+    }
+
+    if (options.mode === 'TEAM_BY_TEAM') {
+      result.warnings.push(
+        'Team-by-Team mode enabled: this run only targets the selected Linear team.'
+      );
+    }
+
+    if (!options.includeComments) {
+      result.warnings.push('Comment migration is disabled.');
+    }
+
+    if (!options.includeAttachments) {
+      result.warnings.push('Attachment migration is disabled.');
+    }
+
+    onProgress({
+      phase: 'fetching',
+      current: 0,
+      total: 1,
+      message: 'Fetching Shortcut data...',
+    });
 
     const [labels, epics, iterations, stories] = await Promise.all([
       shortcut.getLabels(),
@@ -53,142 +286,423 @@ export async function runMigration(
       shortcut.getAllStories(),
     ]);
 
-    // Phase 2: Create labels
-    onProgress({ phase: 'labels', current: 0, total: labels.length, message: 'Creating labels...' });
-
     const labelMap = new Map<number, string>();
-    for (let i = 0; i < labels.length; i++) {
-      try {
-        const label = labels[i];
-        const created = await linear.createLabel(label.name, label.color || '#6B7280', linearTeamId);
-        labelMap.set(label.id, created.id);
-        result.stats.labels++;
-        onProgress({ phase: 'labels', current: i + 1, total: labels.length, message: `Created label: ${label.name}` });
-      } catch (e) {
-        result.errors.push(`Failed to create label: ${labels[i].name}`);
-      }
-    }
+    const existingLabelByName = new Map<string, string>();
+    existingLabels.forEach((label) => {
+      existingLabelByName.set(normalizeName(label.name), label.id);
+    });
 
-    // Phase 3: Create projects from epics
-    onProgress({ phase: 'projects', current: 0, total: epics.length, message: 'Creating projects...' });
+    onProgress({
+      phase: 'labels',
+      current: 0,
+      total: labels.length,
+      message: 'Migrating labels...',
+    });
+
+    for (let i = 0; i < labels.length; i++) {
+      const label = labels[i];
+      result.stats.labels.attempted += 1;
+      const normalizedName = normalizeName(label.name);
+      const existingId = existingLabelByName.get(normalizedName);
+
+      if (existingId) {
+        labelMap.set(label.id, existingId);
+        result.stats.labels.reused += 1;
+      } else {
+        try {
+          if (options.dryRun) {
+            const plannedId = `dry-label-${label.id}`;
+            labelMap.set(label.id, plannedId);
+            markPlannedOrCreated(result.stats.labels, options.dryRun);
+          } else {
+            const created = await linear.createLabel(
+              label.name,
+              label.color || '#6B7280',
+              options.linearTeamId
+            );
+            labelMap.set(label.id, created.id);
+            existingLabelByName.set(normalizedName, created.id);
+            markPlannedOrCreated(result.stats.labels, options.dryRun);
+          }
+        } catch (error) {
+          result.stats.labels.failed += 1;
+          result.errors.push(
+            `[labels] Failed to migrate "${label.name}": ${formatError(error)}`
+          );
+        }
+      }
+
+      onProgress({
+        phase: 'labels',
+        current: i + 1,
+        total: labels.length,
+        message: `Processed label ${i + 1}/${labels.length}`,
+      });
+    }
 
     const projectMap = new Map<number, string>();
-    for (let i = 0; i < epics.length; i++) {
-      try {
-        const epic = epics[i];
-        const created = await linear.createProject(epic.name, [linearTeamId], epic.description);
-        projectMap.set(epic.id, created.id);
-        result.stats.projects++;
-        onProgress({ phase: 'projects', current: i + 1, total: epics.length, message: `Created project: ${epic.name}` });
-      } catch (e) {
-        result.errors.push(`Failed to create project: ${epics[i].name}`);
-      }
-    }
+    const existingProjectByName = new Map<string, string>();
+    existingProjects.forEach((project) => {
+      existingProjectByName.set(normalizeName(project.name), project.id);
+    });
 
-    // Phase 4: Create cycles from iterations
-    onProgress({ phase: 'cycles', current: 0, total: iterations.length, message: 'Creating cycles...' });
+    onProgress({
+      phase: 'projects',
+      current: 0,
+      total: epics.length,
+      message: 'Migrating projects...',
+    });
+
+    for (let i = 0; i < epics.length; i++) {
+      const epic = epics[i];
+      result.stats.projects.attempted += 1;
+      const normalizedName = normalizeName(epic.name);
+      const existingId = existingProjectByName.get(normalizedName);
+
+      if (existingId) {
+        projectMap.set(epic.id, existingId);
+        result.stats.projects.reused += 1;
+      } else {
+        try {
+          if (options.dryRun) {
+            const plannedId = `dry-project-${epic.id}`;
+            projectMap.set(epic.id, plannedId);
+            markPlannedOrCreated(result.stats.projects, options.dryRun);
+          } else {
+            const created = await linear.createProject(
+              epic.name,
+              [options.linearTeamId],
+              epic.description
+            );
+            projectMap.set(epic.id, created.id);
+            existingProjectByName.set(normalizedName, created.id);
+            markPlannedOrCreated(result.stats.projects, options.dryRun);
+          }
+        } catch (error) {
+          result.stats.projects.failed += 1;
+          result.errors.push(
+            `[projects] Failed to migrate "${epic.name}": ${formatError(error)}`
+          );
+        }
+      }
+
+      onProgress({
+        phase: 'projects',
+        current: i + 1,
+        total: epics.length,
+        message: `Processed project ${i + 1}/${epics.length}`,
+      });
+    }
 
     const cycleMap = new Map<number, string>();
+    const existingCycleByKey = new Map<string, string>();
+    existingCycles.forEach((cycle) => {
+      existingCycleByKey.set(
+        normalizeCycleKey(cycle.name, cycle.startsAt, cycle.endsAt),
+        cycle.id
+      );
+    });
+
+    onProgress({
+      phase: 'cycles',
+      current: 0,
+      total: iterations.length,
+      message: 'Migrating cycles...',
+    });
+
     for (let i = 0; i < iterations.length; i++) {
-      try {
-        const iteration = iterations[i];
-        const created = await linear.createCycle(
-          linearTeamId,
-          new Date(iteration.start_date),
-          new Date(iteration.end_date),
-          iteration.name
-        );
-        cycleMap.set(iteration.id, created.id);
-        result.stats.cycles++;
-        onProgress({ phase: 'cycles', current: i + 1, total: iterations.length, message: `Created cycle: ${iteration.name}` });
-      } catch (e) {
-        result.errors.push(`Failed to create cycle: ${iterations[i].name}`);
+      const iteration = iterations[i];
+      result.stats.cycles.attempted += 1;
+      const cycleKey = normalizeCycleKey(
+        iteration.name,
+        iteration.start_date,
+        iteration.end_date
+      );
+      const existingId = existingCycleByKey.get(cycleKey);
+
+      if (existingId) {
+        cycleMap.set(iteration.id, existingId);
+        result.stats.cycles.reused += 1;
+      } else {
+        try {
+          if (options.dryRun) {
+            const plannedId = `dry-cycle-${iteration.id}`;
+            cycleMap.set(iteration.id, plannedId);
+            markPlannedOrCreated(result.stats.cycles, options.dryRun);
+          } else {
+            const created = await linear.createCycle(
+              options.linearTeamId,
+              new Date(iteration.start_date),
+              new Date(iteration.end_date),
+              iteration.name
+            );
+            cycleMap.set(iteration.id, created.id);
+            existingCycleByKey.set(cycleKey, created.id);
+            markPlannedOrCreated(result.stats.cycles, options.dryRun);
+          }
+        } catch (error) {
+          result.stats.cycles.failed += 1;
+          result.errors.push(
+            `[cycles] Failed to migrate "${iteration.name}": ${formatError(error)}`
+          );
+        }
       }
+
+      onProgress({
+        phase: 'cycles',
+        current: i + 1,
+        total: iterations.length,
+        message: `Processed cycle ${i + 1}/${iterations.length}`,
+      });
     }
 
-    // Phase 5: Create issues from stories
-    onProgress({ phase: 'issues', current: 0, total: stories.length, message: 'Creating issues...' });
+    const existingIssueByStoryId = new Map<number, string>();
+    existingIssues.forEach((issue) => {
+      const storyId = extractShortcutStoryId(issue);
+      if (!storyId) return;
+      existingIssueByStoryId.set(storyId, issue.id);
+    });
 
-    const issueMap = new Map<number, string>();
+    const migratedStories: StoryIssueMapping[] = [];
+
+    onProgress({
+      phase: 'issues',
+      current: 0,
+      total: stories.length,
+      message: 'Migrating issues...',
+    });
+
     for (let i = 0; i < stories.length; i++) {
-      try {
-        const story = stories[i];
-        const created = await linear.createIssue({
-          teamId: linearTeamId,
-          title: story.name,
-          description: story.description || undefined,
-          projectId: story.epic_id ? projectMap.get(story.epic_id) : undefined,
-          cycleId: story.iteration_id ? cycleMap.get(story.iteration_id) : undefined,
-          labelIds: story.labels?.map(l => labelMap.get(l.id)).filter(Boolean) as string[],
-          estimate: story.estimate,
+      const story = stories[i];
+      result.stats.issues.attempted += 1;
+
+      const existingIssueId = existingIssueByStoryId.get(story.id);
+      if (existingIssueId) {
+        result.stats.issues.reused += 1;
+        migratedStories.push({ story, issueId: existingIssueId });
+      } else {
+        try {
+          if (options.dryRun) {
+            const plannedId = `dry-issue-${story.id}`;
+            existingIssueByStoryId.set(story.id, plannedId);
+            migratedStories.push({ story, issueId: plannedId });
+            markPlannedOrCreated(result.stats.issues, options.dryRun);
+          } else {
+            const created = await linear.createIssue({
+              teamId: options.linearTeamId,
+              title: story.name,
+              description: buildIssueDescription(story),
+              projectId: story.epic_id ? projectMap.get(story.epic_id) : undefined,
+              cycleId: story.iteration_id ? cycleMap.get(story.iteration_id) : undefined,
+              labelIds: story.labels
+                ?.map((label) => labelMap.get(label.id))
+                .filter((id): id is string => Boolean(id)),
+              priority: mapPriority(story.story_type),
+              estimate: story.estimate,
+            });
+            existingIssueByStoryId.set(story.id, created.id);
+            migratedStories.push({ story, issueId: created.id });
+            markPlannedOrCreated(result.stats.issues, options.dryRun);
+          }
+        } catch (error) {
+          result.stats.issues.failed += 1;
+          result.errors.push(
+            `[issues] Failed to migrate story "${story.name}" (#${story.id}): ${formatError(
+              error
+            )}`
+          );
+        }
+      }
+
+      onProgress({
+        phase: 'issues',
+        current: i + 1,
+        total: stories.length,
+        message: `Processed issue ${i + 1}/${stories.length}`,
+      });
+    }
+
+    if (options.includeComments) {
+      onProgress({
+        phase: 'comments',
+        current: 0,
+        total: migratedStories.length,
+        message: 'Migrating comments...',
+      });
+
+      for (let i = 0; i < migratedStories.length; i++) {
+        const { story, issueId } = migratedStories[i];
+        try {
+          const comments = await shortcut.getStoryComments(story.id);
+
+          for (const comment of comments) {
+            result.stats.comments.attempted += 1;
+            try {
+              if (options.dryRun) {
+                markPlannedOrCreated(result.stats.comments, options.dryRun);
+              } else {
+                await linear.createComment(issueId, buildCommentBody(comment));
+                markPlannedOrCreated(result.stats.comments, options.dryRun);
+              }
+            } catch (error) {
+              result.stats.comments.failed += 1;
+              result.errors.push(
+                `[comments] Failed to migrate comment ${comment.id} for story #${story.id}: ${formatError(
+                  error
+                )}`
+              );
+            }
+          }
+        } catch (error) {
+          result.stats.comments.failed += 1;
+          result.errors.push(
+            `[comments] Failed to fetch comments for story #${story.id}: ${formatError(error)}`
+          );
+        }
+
+        onProgress({
+          phase: 'comments',
+          current: i + 1,
+          total: migratedStories.length,
+          message: `Processed comments ${i + 1}/${migratedStories.length}`,
         });
-        issueMap.set(story.id, created.id);
-        result.stats.issues++;
-        onProgress({ phase: 'issues', current: i + 1, total: stories.length, message: `Created issue: ${story.name}` });
-      } catch (e) {
-        result.errors.push(`Failed to create issue: ${stories[i].name}`);
       }
     }
 
-    // Done!
-    onProgress({ phase: 'done', current: 1, total: 1, message: 'Migration complete!' });
-    result.success = true;
+    if (options.includeAttachments) {
+      onProgress({
+        phase: 'attachments',
+        current: 0,
+        total: migratedStories.length,
+        message: 'Migrating external links as attachments...',
+      });
 
+      for (let i = 0; i < migratedStories.length; i++) {
+        const { story, issueId } = migratedStories[i];
+        const links = extractExternalLinks(story);
+
+        for (const link of links) {
+          result.stats.attachments.attempted += 1;
+          try {
+            if (options.dryRun) {
+              markPlannedOrCreated(result.stats.attachments, options.dryRun);
+            } else {
+              await linear.createAttachment(issueId, link.url, link.title);
+              markPlannedOrCreated(result.stats.attachments, options.dryRun);
+            }
+          } catch (error) {
+            result.stats.attachments.failed += 1;
+            result.errors.push(
+              `[attachments] Failed to migrate link for story #${story.id}: ${formatError(
+                error
+              )}`
+            );
+          }
+        }
+
+        onProgress({
+          phase: 'attachments',
+          current: i + 1,
+          total: migratedStories.length,
+          message: `Processed attachments ${i + 1}/${migratedStories.length}`,
+        });
+      }
+    }
+
+    const finalized = finalizeResult(result, startedAt);
+    onProgress({
+      phase: 'done',
+      current: 1,
+      total: 1,
+      message: finalized.success
+        ? options.dryRun
+          ? 'Dry run complete. Review the plan before running for real.'
+          : 'Migration complete.'
+        : 'Migration completed with errors.',
+    });
+    return finalized;
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    result.errors.push(message);
-    onProgress({ phase: 'error', current: 0, total: 0, message });
+    result.errors.push(`[fatal] ${formatError(error)}`);
+    onProgress({
+      phase: 'error',
+      current: 0,
+      total: 0,
+      message: formatError(error),
+    });
+    return finalizeResult(result, startedAt);
   }
-
-  return result;
 }
 
-// Validate tokens by making test API calls
-export async function validateTokens(): Promise<{ shortcut: boolean; linear: boolean }> {
+// Validate tokens and fetch basic bootstrap metadata used by setup UX.
+export async function validateTokens(tokens?: {
+  shortcutToken?: string;
+  linearToken?: string;
+}): Promise<TokenValidationResult> {
   const state = getState();
-  const result = { shortcut: false, linear: false };
+  const shortcutToken = tokens?.shortcutToken ?? state.shortcutToken;
+  const linearToken = tokens?.linearToken ?? state.linearToken;
+  const result: TokenValidationResult = {
+    shortcut: false,
+    linear: false,
+    linearTeams: [],
+    errors: [],
+  };
 
-  if (state.shortcutToken) {
-    try {
-      const client = new ShortcutClient(state.shortcutToken);
-      await client.getCurrentMember();
-      result.shortcut = true;
-    } catch {
-      // Token invalid
-    }
+  if (!shortcutToken) {
+    result.errors.push('Shortcut token is missing.');
   }
 
-  if (state.linearToken) {
-    try {
-      const client = new LinearClient(state.linearToken);
-      await client.getCurrentUser();
-      result.linear = true;
-    } catch {
-      // Token invalid
-    }
+  if (!linearToken) {
+    result.errors.push('Linear token is missing.');
   }
 
-  return result;
-}
-
-// Fetch summary of data to migrate
-export async function fetchMigrationPreview(): Promise<{
-  stories: number;
-  epics: number;
-  iterations: number;
-  labels: number;
-} | null> {
-  const state = getState();
-
-  if (!state.shortcutToken) return null;
+  if (!shortcutToken || !linearToken) {
+    return result;
+  }
 
   try {
-    const client = new ShortcutClient(state.shortcutToken);
-    const [stories, epics, iterations, labels] = await Promise.all([
-      client.getAllStories(),
-      client.getEpics(),
-      client.getIterations(),
-      client.getLabels(),
+    const shortcutClient = new ShortcutClient(shortcutToken);
+    const member = await shortcutClient.getCurrentMember();
+    result.shortcut = true;
+    result.shortcutUserName = member.profile?.name ?? undefined;
+  } catch (error) {
+    result.errors.push(`Shortcut token validation failed: ${formatError(error)}`);
+  }
+
+  try {
+    const linearClient = new LinearClient(linearToken);
+    const [user, organization, teams] = await Promise.all([
+      linearClient.getCurrentUser(),
+      linearClient.getOrganization(),
+      linearClient.getTeams({ includeAllPages: true }),
+    ]);
+    result.linear = true;
+    result.linearUserName = user.name;
+    result.linearWorkspace = organization.name;
+    result.linearTeams = teams;
+  } catch (error) {
+    result.errors.push(`Linear token validation failed: ${formatError(error)}`);
+  }
+
+  return result;
+}
+
+// Fetch migration preview data and target teams for the wizard.
+export async function fetchMigrationPreview(): Promise<MigrationPreview | null> {
+  const state = getState();
+
+  if (!state.shortcutToken || !state.linearToken) return null;
+
+  try {
+    const shortcutClient = new ShortcutClient(state.shortcutToken);
+    const linearClient = new LinearClient(state.linearToken);
+
+    const [stories, epics, iterations, labels, teams] = await Promise.all([
+      shortcutClient.getAllStories(),
+      shortcutClient.getEpics(),
+      shortcutClient.getIterations(),
+      shortcutClient.getLabels(),
+      linearClient.getTeams({ includeAllPages: true }),
     ]);
 
     return {
@@ -196,6 +710,7 @@ export async function fetchMigrationPreview(): Promise<{
       epics: epics.length,
       iterations: iterations.length,
       labels: labels.length,
+      teams,
     };
   } catch {
     return null;

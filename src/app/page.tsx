@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Zap, Users, RefreshCw, CheckCircle2, Github } from "lucide-react";
 
+const REPO_URL = "https://github.com/JeffOtano/goodbye-shortcut";
+
 export default function Home() {
   return (
     <div className="min-h-screen bg-background">
@@ -17,7 +19,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-4">
               <a
-                href="https://github.com"
+                href={REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-muted-foreground hover:text-foreground transition-colors"
@@ -54,7 +56,7 @@ export default function Home() {
               </Link>
             </Button>
             <Button size="lg" variant="outline" asChild>
-              <a href="https://github.com" target="_blank" rel="noopener noreferrer">
+              <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
                 View on GitHub
               </a>
             </Button>
@@ -192,13 +194,13 @@ export default function Home() {
               "Iterations → Cycles",
               "Labels → Labels",
               "Comments",
-              "Attachments",
-              "Custom Fields",
-              "Workflows",
-              "Team Members",
-              "Projects",
-              "Milestones",
-              "Relationships",
+              "External Links → Attachments",
+              "Issue Estimates",
+              "Priority Mapping",
+              "Mode Selection",
+              "Team Targeting",
+              "Dry Run Mode",
+              "Idempotent Re-Runs",
             ].map((item) => (
               <div
                 key={item}
@@ -240,14 +242,29 @@ export default function Home() {
               </span>
             </div>
             <div className="flex items-center gap-6 text-sm text-muted-foreground">
-              <a href="#" className="hover:text-foreground transition-colors">
+              <a
+                href={`${REPO_URL}#readme`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-foreground transition-colors"
+              >
                 Documentation
               </a>
-              <a href="#" className="hover:text-foreground transition-colors">
+              <a
+                href={REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-foreground transition-colors"
+              >
                 GitHub
               </a>
-              <a href="#" className="hover:text-foreground transition-colors">
-                Privacy
+              <a
+                href={`${REPO_URL}/blob/main/LICENSE`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-foreground transition-colors"
+              >
+                License
               </a>
             </div>
           </div>

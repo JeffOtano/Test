@@ -1,45 +1,121 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, ExternalLink, Eye, EyeOff } from 'lucide-react';
-import { getState, setState } from '@/lib/db';
 import Link from 'next/link';
+import { useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Building2,
+  CheckCircle2,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Loader2,
+  Users,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { getState, setState, StoredLinearTeam } from '@/lib/db';
+import { validateTokens } from '@/lib/migration/service';
+
+type ValidationState = 'idle' | 'validating' | 'success' | 'error';
+
+function sanitizeTeams(teams: StoredLinearTeam[]): StoredLinearTeam[] {
+  return [...teams].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export default function SetupPage() {
-  const [shortcutToken, setShortcutToken] = useState('');
-  const [linearToken, setLinearToken] = useState('');
+  const persistedState = useMemo(() => getState(), []);
+  const [shortcutToken, setShortcutToken] = useState(persistedState.shortcutToken ?? '');
+  const [linearToken, setLinearToken] = useState(persistedState.linearToken ?? '');
   const [showShortcut, setShowShortcut] = useState(false);
   const [showLinear, setShowLinear] = useState(false);
+  const [validationState, setValidationState] = useState<ValidationState>('idle');
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [workspaceName, setWorkspaceName] = useState(persistedState.linearWorkspace ?? '');
+  const [teamCount, setTeamCount] = useState(persistedState.linearTeams?.length ?? 0);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    const state = getState();
-    if (state.shortcutToken) setShortcutToken(state.shortcutToken);
-    if (state.linearToken) setLinearToken(state.linearToken);
-  }, []);
+  const isComplete =
+    shortcutToken.trim().length > 0 && linearToken.trim().length > 0;
+  const tokenHasChanged =
+    shortcutToken !== (persistedState.shortcutToken ?? '') ||
+    linearToken !== (persistedState.linearToken ?? '');
+  const canContinue =
+    isComplete &&
+    (validationState === 'success' ||
+      (!tokenHasChanged && Boolean(persistedState.lastValidatedAt)));
 
-  const handleSave = () => {
-    setState({ shortcutToken, linearToken });
+  async function handleValidateAndSave(): Promise<void> {
+    if (!isComplete) return;
+
+    setValidationState('validating');
+    setValidationErrors([]);
+    setSaved(false);
+
+    const normalizedShortcutToken = shortcutToken.trim();
+    const normalizedLinearToken = linearToken.trim();
+
+    const validation = await validateTokens({
+      shortcutToken: normalizedShortcutToken,
+      linearToken: normalizedLinearToken,
+    });
+
+    if (!validation.shortcut || !validation.linear) {
+      setValidationState('error');
+      setValidationErrors(
+        validation.errors.length > 0
+          ? validation.errors
+          : ['Token validation failed.']
+      );
+      return;
+    }
+
+    const teams = sanitizeTeams(
+      validation.linearTeams.map((team) => ({
+        id: team.id,
+        key: team.key,
+        name: team.name,
+      }))
+    );
+
+    const currentSelectedTeamId = persistedState.linearTeamId;
+    const selectedTeamId = teams.some((team) => team.id === currentSelectedTeamId)
+      ? currentSelectedTeamId
+      : teams[0]?.id;
+
+    setState({
+      shortcutToken: normalizedShortcutToken,
+      linearToken: normalizedLinearToken,
+      shortcutUserName: validation.shortcutUserName,
+      linearUserName: validation.linearUserName,
+      linearWorkspace: validation.linearWorkspace,
+      linearTeams: teams,
+      linearTeamId: selectedTeamId,
+      migrationMode: persistedState.migrationMode ?? 'ONE_SHOT',
+      includeComments: persistedState.includeComments ?? true,
+      includeAttachments: persistedState.includeAttachments ?? true,
+      dryRun: persistedState.dryRun ?? false,
+      lastValidatedAt: new Date().toISOString(),
+    });
+
+    setWorkspaceName(validation.linearWorkspace ?? '');
+    setTeamCount(teams.length);
+    setValidationState('success');
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  };
-
-  const isComplete = shortcutToken.length > 0 && linearToken.length > 0;
+  }
 
   return (
-    <div className="p-8 max-w-2xl mx-auto">
+    <div className="mx-auto max-w-2xl p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold">Setup</h1>
-        <p className="text-muted-foreground mt-1">
-          Enter your API tokens to get started
+        <p className="mt-1 text-muted-foreground">
+          Validate your tokens and bootstrap team metadata before migration
         </p>
       </div>
 
       <div className="space-y-6">
-        {/* Shortcut Token */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -50,8 +126,8 @@ export default function SetupPage() {
                 </CardDescription>
               </div>
               {shortcutToken && (
-                <Badge className="bg-green-500">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                <Badge className="bg-green-600">
+                  <CheckCircle2 className="mr-1 h-3 w-3" />
                   Added
                 </Badge>
               )}
@@ -62,16 +138,26 @@ export default function SetupPage() {
               <input
                 type={showShortcut ? 'text' : 'password'}
                 value={shortcutToken}
-                onChange={(e) => setShortcutToken(e.target.value)}
+                onChange={(event) => {
+                  setShortcutToken(event.target.value);
+                  setValidationState('idle');
+                  setValidationErrors([]);
+                }}
                 placeholder="Paste your Shortcut API token"
-                className="w-full px-3 py-2 border rounded-md bg-background pr-10"
+                className="w-full rounded-md border bg-background px-3 py-2 pr-10"
+                autoComplete="off"
               />
               <button
                 type="button"
-                onClick={() => setShowShortcut(!showShortcut)}
+                onClick={() => setShowShortcut((value) => !value)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label={showShortcut ? 'Hide Shortcut token' : 'Show Shortcut token'}
               >
-                {showShortcut ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showShortcut ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
               </button>
             </div>
             <a
@@ -85,7 +171,6 @@ export default function SetupPage() {
           </CardContent>
         </Card>
 
-        {/* Linear Token */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -96,8 +181,8 @@ export default function SetupPage() {
                 </CardDescription>
               </div>
               {linearToken && (
-                <Badge className="bg-green-500">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                <Badge className="bg-green-600">
+                  <CheckCircle2 className="mr-1 h-3 w-3" />
                   Added
                 </Badge>
               )}
@@ -108,16 +193,26 @@ export default function SetupPage() {
               <input
                 type={showLinear ? 'text' : 'password'}
                 value={linearToken}
-                onChange={(e) => setLinearToken(e.target.value)}
+                onChange={(event) => {
+                  setLinearToken(event.target.value);
+                  setValidationState('idle');
+                  setValidationErrors([]);
+                }}
                 placeholder="Paste your Linear API key"
-                className="w-full px-3 py-2 border rounded-md bg-background pr-10"
+                className="w-full rounded-md border bg-background px-3 py-2 pr-10"
+                autoComplete="off"
               />
               <button
                 type="button"
-                onClick={() => setShowLinear(!showLinear)}
+                onClick={() => setShowLinear((value) => !value)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label={showLinear ? 'Hide Linear token' : 'Show Linear token'}
               >
-                {showLinear ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showLinear ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
               </button>
             </div>
             <a
@@ -131,23 +226,62 @@ export default function SetupPage() {
           </CardContent>
         </Card>
 
-        {/* Actions */}
-        <div className="flex gap-4">
-          <Button onClick={handleSave} disabled={!shortcutToken && !linearToken}>
-            {saved ? 'Saved!' : 'Save Tokens'}
+        {validationState === 'success' && (
+          <div className="rounded-lg border border-green-600/40 bg-green-600/5 p-4 text-sm">
+            <div className="mb-2 flex items-center gap-2 font-medium text-green-700">
+              <CheckCircle2 className="h-4 w-4" />
+              Tokens validated
+            </div>
+            <div className="space-y-1 text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Building2 className="h-4 w-4" />
+                Workspace: {workspaceName || 'Unknown'}
+              </div>
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Teams discovered: {teamCount}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {validationState === 'error' && (
+          <div className="rounded-lg border border-red-600/40 bg-red-600/5 p-4 text-sm">
+            <div className="mb-2 flex items-center gap-2 font-medium text-red-700">
+              <AlertCircle className="h-4 w-4" />
+              Validation failed
+            </div>
+            <ul className="space-y-1 text-muted-foreground">
+              {validationErrors.map((error) => (
+                <li key={error}>• {error}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-4">
+          <Button onClick={handleValidateAndSave} disabled={!isComplete || validationState === 'validating'}>
+            {validationState === 'validating' ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Validating...
+              </>
+            ) : saved ? (
+              'Saved!'
+            ) : (
+              'Validate & Save'
+            )}
           </Button>
-          {isComplete && (
+          {canContinue && (
             <Button asChild variant="outline">
-              <Link href="/migrate">
-                Continue to Migration
-              </Link>
+              <Link href="/migrate">Continue to Migration</Link>
             </Button>
           )}
         </div>
 
-        {/* Info */}
         <p className="text-sm text-muted-foreground">
-          Your tokens are stored locally in your browser. They are never sent to any server.
+          Tokens are stored in your browser localStorage and never sent to any intermediary
+          service.
         </p>
       </div>
     </div>

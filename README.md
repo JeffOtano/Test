@@ -15,12 +15,6 @@
   <a href="#-contributing">Contributing</a>
 </p>
 
-<p align="center">
-  <img src="docs/demo.gif" alt="Demo" width="700" />
-</p>
-
----
-
 ## Why Goodbye Shortcut?
 
 Migrating between project management tools sucks. Most solutions require:
@@ -66,7 +60,7 @@ Then open [localhost:3000](http://localhost:3000):
 |------|-------------|----------|
 | **One-Shot** | Migrate everything at once | Teams ready to switch |
 | **Team-by-Team** | Migrate gradually | Large organizations |
-| **Real-Time Sync** | Keep both in sync | Trial periods |
+| **Real-Time Sync** | Planned | Future releases |
 
 ### What Gets Migrated
 
@@ -77,8 +71,15 @@ Then open [localhost:3000](http://localhost:3000):
 | Iterations | → | Cycles |
 | Labels | → | Labels |
 | Comments | → | Comments |
-| Attachments | → | Attachments |
-| Workflow States | → | Workflow States |
+| External Links | → | Attachments |
+| Estimates | → | Estimates |
+
+### Operational Safeguards
+
+- Dry run mode for safe planning before writing to Linear
+- Idempotent re-runs that reuse existing Labels/Projects/Cycles/Issues when possible
+- Per-entity stats and error reporting (attempted/created/reused/failed)
+- Team-targeted runs for staged migration rollout
 
 ---
 
@@ -125,7 +126,7 @@ npm start
 
 | | Technology |
 |-|------------|
-| Framework | Next.js 14 |
+| Framework | Next.js 16 |
 | Language | TypeScript |
 | Styling | Tailwind CSS |
 | Components | shadcn/ui |

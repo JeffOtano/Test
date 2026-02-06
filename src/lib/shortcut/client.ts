@@ -1,6 +1,5 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import {
-  ShortcutWorkspace,
   ShortcutTeam,
   ShortcutProject,
   ShortcutEpic,
@@ -13,11 +12,16 @@ import {
 } from '@/types';
 
 const SHORTCUT_API_URL = 'https://api.app.shortcut.com/api/v3';
+const MAX_RATE_LIMIT_RETRIES = 5;
+
+interface RetryableRequestConfig extends InternalAxiosRequestConfig {
+  __retryCount?: number;
+}
 
 export class ShortcutClient {
   private client: AxiosInstance;
-  private rateLimitRemaining: number = 200;
-  private rateLimitReset: number = 0;
+  private rateLimitRemaining = 200;
+  private rateLimitResetAtMs = 0;
 
   constructor(accessToken: string) {
     this.client = axios.create({
@@ -28,20 +32,44 @@ export class ShortcutClient {
       },
     });
 
-    // Rate limiting interceptor
+    // Update local rate limit tracking and retry on 429.
     this.client.interceptors.response.use(
       (response) => {
-        this.rateLimitRemaining = parseInt(response.headers['x-rate-limit-remaining'] || '200');
-        this.rateLimitReset = parseInt(response.headers['x-rate-limit-reset'] || '0');
+        const remainingHeader =
+          response.headers['x-rate-limit-remaining'] ??
+          response.headers['x-ratelimit-remaining'];
+        const resetHeader =
+          response.headers['x-rate-limit-reset'] ?? response.headers['x-ratelimit-reset'];
+
+        const remaining = Number.parseInt(String(remainingHeader ?? '200'), 10);
+        const resetSeconds = Number.parseInt(String(resetHeader ?? '0'), 10);
+
+        if (Number.isFinite(remaining)) {
+          this.rateLimitRemaining = remaining;
+        }
+
+        if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
+          this.rateLimitResetAtMs = resetSeconds * 1000;
+        }
+
         return response;
       },
       async (error: AxiosError) => {
-        if (error.response?.status === 429) {
-          // Rate limited - wait and retry
-          const retryAfter = parseInt(error.response.headers['retry-after'] || '60');
-          await this.sleep(retryAfter * 1000);
-          return this.client.request(error.config!);
+        const config = error.config as RetryableRequestConfig | undefined;
+        if (error.response?.status === 429 && config) {
+          const retryAfterHeader = error.response.headers?.['retry-after'];
+          const retryAfterSeconds = Number.parseInt(String(retryAfterHeader ?? '2'), 10);
+          const retryCount = config.__retryCount ?? 0;
+
+          if (retryCount >= MAX_RATE_LIMIT_RETRIES) {
+            throw error;
+          }
+
+          config.__retryCount = retryCount + 1;
+          await this.sleep(Math.max(1, retryAfterSeconds) * 1000);
+          return this.client.request(config);
         }
+
         throw error;
       }
     );
@@ -52,8 +80,8 @@ export class ShortcutClient {
   }
 
   private async checkRateLimit(): Promise<void> {
-    if (this.rateLimitRemaining < 10) {
-      const waitTime = Math.max(0, this.rateLimitReset - Date.now());
+    if (this.rateLimitRemaining < 10 && this.rateLimitResetAtMs > 0) {
+      const waitTime = Math.max(0, this.rateLimitResetAtMs - Date.now());
       if (waitTime > 0) {
         await this.sleep(waitTime);
       }
@@ -168,19 +196,28 @@ export class ShortcutClient {
 
   async getAllStories(batchSize: number = 100): Promise<ShortcutStory[]> {
     const allStories: ShortcutStory[] = [];
-    let hasMore = true;
     let nextToken: string | undefined;
+    let previousToken: string | undefined;
 
-    while (hasMore) {
+    while (true) {
       await this.checkRateLimit();
       const response = await this.client.post('/stories/search', {
         page_size: batchSize,
         next: nextToken,
       });
 
-      allStories.push(...response.data.data);
-      nextToken = response.data.next;
-      hasMore = !!nextToken;
+      const batch = Array.isArray(response.data?.data)
+        ? (response.data.data as ShortcutStory[])
+        : [];
+      allStories.push(...batch);
+
+      previousToken = nextToken;
+      nextToken = typeof response.data?.next === 'string' ? response.data.next : undefined;
+
+      // Defensive break to avoid infinite loops if API returns the same cursor repeatedly.
+      if (!nextToken || nextToken === previousToken) {
+        break;
+      }
     }
 
     return allStories;
@@ -189,8 +226,13 @@ export class ShortcutClient {
   // Comments
   async getStoryComments(storyId: number): Promise<ShortcutComment[]> {
     await this.checkRateLimit();
-    const story = await this.getStory(storyId);
-    return (story as ShortcutStory & { comments: ShortcutComment[] }).comments || [];
+    try {
+      const response = await this.client.get(`/stories/${storyId}/comments`);
+      return Array.isArray(response.data) ? (response.data as ShortcutComment[]) : [];
+    } catch {
+      const story = await this.getStory(storyId);
+      return (story as ShortcutStory & { comments?: ShortcutComment[] }).comments ?? [];
+    }
   }
 
   // Export all data

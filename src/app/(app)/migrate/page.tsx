@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
-import { getMigrationSettings, getState, setMigrationSettings, setState } from '@/lib/db';
+import { getMigrationSettings, setMigrationSettings, setState } from '@/lib/db';
 import {
   fetchMigrationPreview,
   MigrationPreview,
@@ -24,6 +24,7 @@ import {
   MigrationResult,
   runMigration,
 } from '@/lib/migration/service';
+import { useAppState } from '@/lib/use-app-state';
 
 const steps = ['Mode', 'Configure', 'Migrate', 'Done'];
 
@@ -66,32 +67,39 @@ function describeRun(result: MigrationResult): string {
 }
 
 export default function MigratePage() {
-  const persistedState = useMemo(() => getState(), []);
-  const persistedSettings = useMemo(
-    () => getMigrationSettings(persistedState),
-    [persistedState]
-  );
-  const hasTokens = Boolean(
-    persistedState.shortcutToken && persistedState.linearToken
-  );
+  const appState = useAppState();
+  const persistedSettings = getMigrationSettings(appState);
+  const hasTokens = Boolean(appState.shortcutToken && appState.linearToken);
 
   const [step, setStep] = useState(0);
-  const [mode, setMode] = useState<SelectableMode>(persistedSettings.mode);
-  const [selectedTeamId, setSelectedTeamId] = useState(
-    persistedSettings.linearTeamId ?? persistedState.linearTeams?.[0]?.id ?? ''
+  const [modeOverride, setModeOverride] = useState<SelectableMode | null>(null);
+  const [selectedTeamIdOverride, setSelectedTeamIdOverride] = useState<string | null>(null);
+  const [includeCommentsOverride, setIncludeCommentsOverride] = useState<boolean | null>(
+    null
   );
-  const [includeComments, setIncludeComments] = useState(
-    persistedSettings.includeComments
-  );
-  const [includeAttachments, setIncludeAttachments] = useState(
-    persistedSettings.includeAttachments
-  );
-  const [dryRun, setDryRun] = useState(persistedSettings.dryRun);
+  const [includeAttachmentsOverride, setIncludeAttachmentsOverride] =
+    useState<boolean | null>(null);
+  const [dryRunOverride, setDryRunOverride] = useState<boolean | null>(null);
   const [preview, setPreview] = useState<MigrationPreview | null>(null);
-  const [teams, setTeams] = useState(persistedState.linearTeams ?? []);
+  const [teamsOverride, setTeamsOverride] = useState<
+    Array<{ id: string; key: string; name: string }> | null
+  >(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<MigrationProgress | null>(null);
   const [result, setResult] = useState<MigrationResult | null>(null);
+
+  const mode = modeOverride ?? persistedSettings.mode;
+  const selectedTeamId =
+    selectedTeamIdOverride ??
+    persistedSettings.linearTeamId ??
+    appState.linearTeams?.[0]?.id ??
+    '';
+  const includeComments =
+    includeCommentsOverride ?? persistedSettings.includeComments;
+  const includeAttachments =
+    includeAttachmentsOverride ?? persistedSettings.includeAttachments;
+  const dryRun = dryRunOverride ?? persistedSettings.dryRun;
+  const teams = teamsOverride ?? appState.linearTeams ?? [];
 
   async function loadPreview(): Promise<void> {
     setLoading(true);
@@ -104,12 +112,12 @@ export default function MigratePage() {
         key: team.key,
         name: team.name,
       }));
-      setTeams(normalizedTeams);
+      setTeamsOverride(normalizedTeams);
       setState({ linearTeams: normalizedTeams });
 
       if (!selectedTeamId && normalizedTeams.length > 0) {
         const nextTeamId = normalizedTeams[0].id;
-        setSelectedTeamId(nextTeamId);
+        setSelectedTeamIdOverride(nextTeamId);
         setState({ linearTeamId: nextTeamId });
       }
     }
@@ -224,7 +232,9 @@ export default function MigratePage() {
             {modes.map((entry) => (
               <div
                 key={entry.id}
-                onClick={() => !entry.disabled && setMode(entry.id as SelectableMode)}
+                onClick={() =>
+                  !entry.disabled && setModeOverride(entry.id as SelectableMode)
+                }
                 className={cn(
                   'flex items-center gap-4 rounded-lg border p-4 transition-colors',
                   entry.disabled
@@ -307,7 +317,7 @@ export default function MigratePage() {
                       value={selectedTeamId}
                       onChange={(event) => {
                         const nextTeamId = event.target.value;
-                        setSelectedTeamId(nextTeamId);
+                        setSelectedTeamIdOverride(nextTeamId);
                         setState({ linearTeamId: nextTeamId });
                       }}
                     >
@@ -325,7 +335,9 @@ export default function MigratePage() {
                       <input
                         type="checkbox"
                         checked={includeComments}
-                        onChange={(event) => setIncludeComments(event.target.checked)}
+                        onChange={(event) =>
+                          setIncludeCommentsOverride(event.target.checked)
+                        }
                       />
                       Migrate comments
                     </label>
@@ -333,7 +345,9 @@ export default function MigratePage() {
                       <input
                         type="checkbox"
                         checked={includeAttachments}
-                        onChange={(event) => setIncludeAttachments(event.target.checked)}
+                        onChange={(event) =>
+                          setIncludeAttachmentsOverride(event.target.checked)
+                        }
                       />
                       Migrate external links as attachments
                     </label>
@@ -341,7 +355,7 @@ export default function MigratePage() {
                       <input
                         type="checkbox"
                         checked={dryRun}
-                        onChange={(event) => setDryRun(event.target.checked)}
+                        onChange={(event) => setDryRunOverride(event.target.checked)}
                       />
                       Dry run (no writes to Linear)
                     </label>

@@ -24,11 +24,14 @@ export class ShortcutClient {
   private rateLimitResetAtMs = 0;
 
   constructor(accessToken: string) {
+    const isBrowser = typeof window !== 'undefined';
     this.client = axios.create({
-      baseURL: SHORTCUT_API_URL,
+      baseURL: isBrowser ? '/api/shortcut' : SHORTCUT_API_URL,
       headers: {
         'Content-Type': 'application/json',
-        'Shortcut-Token': accessToken,
+        ...(isBrowser
+          ? { 'x-shortcut-token': accessToken }
+          : { 'Shortcut-Token': accessToken }),
       },
     });
 

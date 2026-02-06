@@ -124,6 +124,13 @@ function formatError(error: unknown): string {
   return 'Unknown error';
 }
 
+function withNetworkHint(message: string): string {
+  if (message === 'Network Error' || message === 'Failed to fetch') {
+    return `${message}. This is usually a connectivity or browser policy issue.`;
+  }
+  return message;
+}
+
 function extractShortcutStoryId(issue: { description?: string }): number | undefined {
   const description = issue.description ?? '';
   const match = description.match(/Shortcut Story ID:\s*(\d+)/i);
@@ -666,7 +673,9 @@ export async function validateTokens(tokens?: {
     result.shortcut = true;
     result.shortcutUserName = member.profile?.name ?? undefined;
   } catch (error) {
-    result.errors.push(`Shortcut token validation failed: ${formatError(error)}`);
+    result.errors.push(
+      `Shortcut token validation failed: ${withNetworkHint(formatError(error))}`
+    );
   }
 
   try {
@@ -681,7 +690,9 @@ export async function validateTokens(tokens?: {
     result.linearWorkspace = organization.name;
     result.linearTeams = teams;
   } catch (error) {
-    result.errors.push(`Linear token validation failed: ${formatError(error)}`);
+    result.errors.push(
+      `Linear token validation failed: ${withNetworkHint(formatError(error))}`
+    );
   }
 
   return result;

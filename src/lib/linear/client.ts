@@ -31,7 +31,12 @@ export class LinearClient {
   private client: LinearSDK;
 
   constructor(accessToken: string) {
-    this.client = new LinearSDK({ accessToken });
+    const isBrowser = typeof window !== 'undefined';
+    this.client = new LinearSDK(
+      isBrowser
+        ? { accessToken, apiUrl: '/api/linear/graphql' }
+        : { accessToken }
+    );
   }
 
   private async collectNodes<T>(

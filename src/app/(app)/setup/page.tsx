@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   AlertCircle,
   Building2,
@@ -15,8 +15,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { getState, setState, StoredLinearTeam } from '@/lib/db';
+import { setState, StoredLinearTeam } from '@/lib/db';
 import { validateTokens } from '@/lib/migration/service';
+import { useAppState } from '@/lib/use-app-state';
 
 type ValidationState = 'idle' | 'validating' | 'success' | 'error';
 
@@ -25,16 +26,22 @@ function sanitizeTeams(teams: StoredLinearTeam[]): StoredLinearTeam[] {
 }
 
 export default function SetupPage() {
-  const persistedState = useMemo(() => getState(), []);
-  const [shortcutToken, setShortcutToken] = useState(persistedState.shortcutToken ?? '');
-  const [linearToken, setLinearToken] = useState(persistedState.linearToken ?? '');
+  const persistedState = useAppState();
+  const [shortcutTokenDraft, setShortcutTokenDraft] = useState<string | null>(null);
+  const [linearTokenDraft, setLinearTokenDraft] = useState<string | null>(null);
   const [showShortcut, setShowShortcut] = useState(false);
   const [showLinear, setShowLinear] = useState(false);
   const [validationState, setValidationState] = useState<ValidationState>('idle');
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [workspaceName, setWorkspaceName] = useState(persistedState.linearWorkspace ?? '');
-  const [teamCount, setTeamCount] = useState(persistedState.linearTeams?.length ?? 0);
+  const [validatedWorkspaceName, setValidatedWorkspaceName] = useState('');
+  const [validatedTeamCount, setValidatedTeamCount] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
+  const shortcutToken = shortcutTokenDraft ?? persistedState.shortcutToken ?? '';
+  const linearToken = linearTokenDraft ?? persistedState.linearToken ?? '';
+  const workspaceName =
+    validatedWorkspaceName || persistedState.linearWorkspace || '';
+  const teamCount =
+    validatedTeamCount ?? persistedState.linearTeams?.length ?? 0;
 
   const isComplete =
     shortcutToken.trim().length > 0 && linearToken.trim().length > 0;
@@ -99,8 +106,8 @@ export default function SetupPage() {
       lastValidatedAt: new Date().toISOString(),
     });
 
-    setWorkspaceName(validation.linearWorkspace ?? '');
-    setTeamCount(teams.length);
+    setValidatedWorkspaceName(validation.linearWorkspace ?? '');
+    setValidatedTeamCount(teams.length);
     setValidationState('success');
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -139,7 +146,7 @@ export default function SetupPage() {
                 type={showShortcut ? 'text' : 'password'}
                 value={shortcutToken}
                 onChange={(event) => {
-                  setShortcutToken(event.target.value);
+                  setShortcutTokenDraft(event.target.value);
                   setValidationState('idle');
                   setValidationErrors([]);
                 }}
@@ -194,7 +201,7 @@ export default function SetupPage() {
                 type={showLinear ? 'text' : 'password'}
                 value={linearToken}
                 onChange={(event) => {
-                  setLinearToken(event.target.value);
+                  setLinearTokenDraft(event.target.value);
                   setValidationState('idle');
                   setValidationErrors([]);
                 }}
@@ -280,8 +287,7 @@ export default function SetupPage() {
         </div>
 
         <p className="text-sm text-muted-foreground">
-          Tokens are stored in your browser localStorage and never sent to any intermediary
-          service.
+          Tokens are stored in your browser localStorage and are not persisted by this app server.
         </p>
       </div>
     </div>

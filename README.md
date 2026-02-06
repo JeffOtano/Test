@@ -4,7 +4,7 @@
   <p align="center">
     <strong>The open source migration tool for teams moving from Shortcut to Linear.</strong>
     <br />
-    No signup. No servers. Just paste your tokens and go.
+    No signup. No external migration service. Just paste your tokens and go.
   </p>
 </p>
 
@@ -26,7 +26,7 @@ Migrating between project management tools sucks. Most solutions require:
 **Goodbye Shortcut is different:**
 
 - **100% open source** — Run it yourself, audit the code
-- **No servers** — Everything runs in your browser
+- **No external migration service** — You run the app yourself
 - **No signup** — Just paste your API tokens
 - **No cost** — Free forever
 
@@ -96,7 +96,7 @@ Then open [localhost:3000](http://localhost:3000):
                     (tokens stay here)
 ```
 
-**Your API tokens never leave your browser.** We don't run any servers. The entire migration happens client-side.
+**Your tokens are not stored by this app.** The app calls provider APIs directly (via same-origin proxy routes when needed).
 
 ---
 

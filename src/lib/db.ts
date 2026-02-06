@@ -1,7 +1,8 @@
 // Simple localStorage-based storage.
 // No database, no auth server - just browser state.
 
-const STORAGE_KEY = 'goodbye-shortcut';
+export const STORAGE_KEY = 'goodbye-shortcut';
+export const STORAGE_STATE_CHANGE_EVENT = 'goodbye-shortcut:state-change';
 
 export interface StoredLinearTeam {
   id: string;
@@ -41,6 +42,9 @@ const DEFAULT_MIGRATION_SETTINGS: MigrationSettings = {
   includeAttachments: true,
   dryRun: false,
 };
+
+let cachedSerializedState: string | null | undefined;
+let cachedState: AppState = {};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
@@ -96,8 +100,20 @@ export function getState(): AppState {
 
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return {};
-    return normalizeState(JSON.parse(stored));
+
+    if (stored === cachedSerializedState) {
+      return cachedState;
+    }
+
+    if (!stored) {
+      cachedSerializedState = null;
+      cachedState = {};
+      return cachedState;
+    }
+
+    cachedSerializedState = stored;
+    cachedState = normalizeState(JSON.parse(stored));
+    return cachedState;
   } catch {
     return {};
   }
@@ -117,7 +133,12 @@ export function getMigrationSettings(state: AppState = getState()): MigrationSet
 export function setState(state: Partial<AppState>): void {
   if (typeof window === 'undefined') return;
   const current = getState();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...state }));
+  const nextState = normalizeState({ ...current, ...state });
+  const serialized = JSON.stringify(nextState);
+  localStorage.setItem(STORAGE_KEY, serialized);
+  cachedSerializedState = serialized;
+  cachedState = nextState;
+  window.dispatchEvent(new Event(STORAGE_STATE_CHANGE_EVENT));
 }
 
 export function setMigrationSettings(settings: Partial<MigrationSettings>): void {
@@ -136,6 +157,9 @@ export function setMigrationSettings(settings: Partial<MigrationSettings>): void
 export function clearState(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(STORAGE_KEY);
+  cachedSerializedState = null;
+  cachedState = {};
+  window.dispatchEvent(new Event(STORAGE_STATE_CHANGE_EVENT));
 }
 
 export function hasTokens(): boolean {

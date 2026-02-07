@@ -147,6 +147,14 @@ export interface LinearIssue {
   completedAt?: string;
 }
 
+export interface LinearAttachment {
+  id: string;
+  title?: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LinearLabel {
   id: string;
   name: string;

@@ -172,6 +172,17 @@ export class ShortcutClient {
     return response.data;
   }
 
+  async createLabel(params: {
+    name: string;
+    color?: string;
+    description?: string;
+    external_id?: string;
+  }): Promise<ShortcutLabel> {
+    await this.checkRateLimit();
+    const response = await this.client.post('/labels', params);
+    return response.data;
+  }
+
   // Workflows
   async getWorkflows(): Promise<{ id: number; name: string; states: ShortcutWorkflowState[] }[]> {
     await this.checkRateLimit();
@@ -199,7 +210,14 @@ export class ShortcutClient {
     description?: string;
     story_type?: ShortcutStory['story_type'];
     workflow_state_id: number;
+    labels?: Array<{
+      name: string;
+      color?: string;
+      description?: string;
+      external_id?: string;
+    }>;
     estimate?: number;
+    external_links?: string[];
     project_id?: number;
     iteration_id?: number;
     owner_ids?: string[];
@@ -216,7 +234,14 @@ export class ShortcutClient {
       description: string;
       story_type: ShortcutStory['story_type'];
       workflow_state_id: number;
+      labels: Array<{
+        name: string;
+        color?: string;
+        description?: string;
+        external_id?: string;
+      }>;
       estimate: number;
+      external_links: string[];
       project_id: number;
       iteration_id: number;
       owner_ids: string[];

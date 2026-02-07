@@ -1,5 +1,6 @@
 import { LinearClient as LinearSDK } from '@linear/sdk';
 import {
+  LinearAttachment,
   LinearCycle,
   LinearComment,
   LinearIssue,
@@ -443,6 +444,26 @@ export class LinearClient {
   }
 
   // Attachments
+  async getIssueAttachments(
+    issueId: string,
+    options: ListOptions = {}
+  ): Promise<LinearAttachment[]> {
+    const issue = await this.client.issue(issueId);
+    const attachments = await issue.attachments({ first: options.pageSize ?? 250 });
+    const nodes = await this.collectNodes(
+      attachments as PaginatableConnection<(typeof attachments.nodes)[0]>,
+      options
+    );
+
+    return nodes.map((attachment) => ({
+      id: attachment.id,
+      title: attachment.title ?? undefined,
+      url: attachment.url,
+      createdAt: toIsoString(attachment.createdAt),
+      updatedAt: toIsoString(attachment.updatedAt),
+    }));
+  }
+
   async createAttachment(issueId: string, url: string, title: string): Promise<{ id: string }> {
     const result = await this.client.createAttachment({
       issueId,

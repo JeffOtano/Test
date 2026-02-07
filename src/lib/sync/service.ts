@@ -23,7 +23,13 @@ import {
   mapIssueToShortcutStateId,
   mapStoryToLinearStateId,
 } from '../workflow-state-mapping';
-import { LinearComment, LinearIssue, ShortcutComment, ShortcutStory } from '@/types';
+import {
+  LinearAttachment,
+  LinearComment,
+  LinearIssue,
+  ShortcutComment,
+  ShortcutStory,
+} from '@/types';
 
 const SYNC_METADATA_MARKER = 'Synced by Goodbye Shortcut';
 
@@ -151,6 +157,67 @@ function mapIssuePriorityFromStory(story: ShortcutStory): number {
   }
 }
 
+function normalizeName(value: string | undefined | null): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function normalizeHexColor(value: string | undefined, fallback: string = '#6B7280'): string {
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    const c = trimmed.slice(1);
+    return `#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}`.toUpperCase();
+  }
+  return fallback;
+}
+
+function areStringSetsEqual(a: string[], b: string[]): boolean {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  if (setA.size !== setB.size) return false;
+  for (const value of setA) {
+    if (!setB.has(value)) return false;
+  }
+  return true;
+}
+
+function normalizeUrl(value: string | undefined | null): string {
+  return (value ?? '').trim();
+}
+
+function extractShortcutExternalLinks(story: ShortcutStory): string[] {
+  const urls: string[] = [];
+  for (const entry of story.external_links ?? []) {
+    if (typeof entry === 'string') {
+      const url = normalizeUrl(entry);
+      if (url.startsWith('http')) urls.push(url);
+      continue;
+    }
+
+    const candidate =
+      (typeof entry?.url === 'string' && entry.url) ||
+      (typeof (entry as Record<string, unknown>)?.external_url === 'string'
+        ? ((entry as Record<string, unknown>).external_url as string)
+        : undefined) ||
+      (typeof (entry as Record<string, unknown>)?.link === 'string'
+        ? ((entry as Record<string, unknown>).link as string)
+        : undefined);
+    const url = normalizeUrl(candidate);
+    if (url.startsWith('http')) urls.push(url);
+  }
+  return Array.from(new Set(urls));
+}
+
+function extractLinearAttachmentUrls(attachments: LinearAttachment[]): string[] {
+  const urls = attachments
+    .map((attachment) => normalizeUrl(attachment.url))
+    .filter((url) => url.startsWith('http'));
+  return Array.from(new Set(urls));
+}
+
 function toShortcutDescription(issue: LinearIssue): string {
   const description = stripSyncMetadata(issue.description);
   const metadata = [
@@ -256,22 +323,37 @@ function isLinearIssueEquivalentToStory(
   issue: LinearIssue,
   story: ShortcutStory,
   expectedDescription: string,
-  expectedStateId?: string
+  expectedStateId?: string,
+  expectedLabelIds: string[] = [],
+  expectedAttachmentUrls?: string[],
+  currentAttachmentUrls: string[] = []
 ): boolean {
   return (
     issue.title.trim() === story.name.trim() &&
     stripSyncMetadata(issue.description) === stripSyncMetadata(expectedDescription) &&
     issue.priority === mapIssuePriorityFromStory(story) &&
     (issue.estimate ?? undefined) === (story.estimate ?? undefined) &&
-    (expectedStateId === undefined || issue.state.id === expectedStateId)
+    (expectedStateId === undefined || issue.state.id === expectedStateId) &&
+    areStringSetsEqual(
+      issue.labels.map((label) => label.id),
+      expectedLabelIds
+    ) &&
+    (expectedAttachmentUrls === undefined ||
+      areStringSetsEqual(currentAttachmentUrls, expectedAttachmentUrls))
   );
+}
+
+function currentShortcutExternalLinks(story: ShortcutStory): string[] {
+  return extractShortcutExternalLinks(story);
 }
 
 function isShortcutStoryEquivalentToIssue(
   story: ShortcutStory,
   issue: LinearIssue,
   expectedDescription: string,
-  expectedWorkflowStateId?: number
+  expectedWorkflowStateId?: number,
+  expectedLabelNames: string[] = [],
+  expectedExternalLinks?: string[]
 ): boolean {
   return (
     story.name.trim() === issue.title.trim() &&
@@ -279,7 +361,13 @@ function isShortcutStoryEquivalentToIssue(
     story.story_type === mapStoryTypeFromIssue(issue) &&
     (story.estimate ?? undefined) === (issue.estimate ?? undefined) &&
     (expectedWorkflowStateId === undefined ||
-      story.workflow_state_id === expectedWorkflowStateId)
+      story.workflow_state_id === expectedWorkflowStateId) &&
+    areStringSetsEqual(
+      story.labels.map((label) => normalizeName(label.name)),
+      expectedLabelNames
+    ) &&
+    (expectedExternalLinks === undefined ||
+      areStringSetsEqual(currentShortcutExternalLinks(story), expectedExternalLinks))
   );
 }
 
@@ -359,6 +447,29 @@ async function syncLinearCommentsToShortcutStory(params: {
   return created;
 }
 
+async function syncShortcutAttachmentsToLinearIssue(params: {
+  shortcutStory: ShortcutStory;
+  linearClient: LinearClient;
+  issueId: string;
+}): Promise<number> {
+  const sourceUrls = extractShortcutExternalLinks(params.shortcutStory);
+  if (sourceUrls.length === 0) return 0;
+
+  const existingAttachments = await params.linearClient.getIssueAttachments(params.issueId, {
+    includeAllPages: true,
+  });
+  const existingUrls = new Set(extractLinearAttachmentUrls(existingAttachments));
+
+  let created = 0;
+  for (const url of sourceUrls) {
+    if (existingUrls.has(url)) continue;
+    await params.linearClient.createAttachment(params.issueId, url, 'Shortcut Link');
+    created += 1;
+  }
+
+  return created;
+}
+
 function defaultDelta(): SyncDeltaStats {
   return {
     storiesScanned: 0,
@@ -405,6 +516,9 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
   const issuesPromise = linearClient.getIssues(input.config.linearTeamId, {
     includeAllPages: true,
   });
+  const linearLabelsPromise = linearClient.getLabels(input.config.linearTeamId, {
+    includeAllPages: true,
+  });
 
   const shortcutWorkflowsPromise = shortcutClient.getWorkflows();
   const linearWorkflowStatesPromise =
@@ -412,12 +526,68 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
       ? Promise.resolve([])
       : linearClient.getWorkflowStates(input.config.linearTeamId);
 
-  const [stories, issues, shortcutWorkflows, linearWorkflowStates] = await Promise.all([
+  const [stories, issues, linearLabels, shortcutWorkflows, linearWorkflowStates] =
+    await Promise.all([
     storiesPromise,
     issuesPromise,
+    linearLabelsPromise,
     shortcutWorkflowsPromise,
     linearWorkflowStatesPromise,
   ]);
+
+  const linearLabelIdByName = new Map<string, string>();
+  linearLabels.forEach((label) => {
+    const key = normalizeName(label.name);
+    if (!key) return;
+    if (!linearLabelIdByName.has(key)) {
+      linearLabelIdByName.set(key, label.id);
+    }
+  });
+
+  const resolveLinearLabelIdsForStory = async (story: ShortcutStory): Promise<string[]> => {
+    const labelIds: string[] = [];
+
+    for (const label of story.labels ?? []) {
+      const name = label.name?.trim();
+      if (!name) continue;
+      const key = normalizeName(name);
+      const existing = linearLabelIdByName.get(key);
+      if (existing) {
+        labelIds.push(existing);
+        continue;
+      }
+
+      const created = await linearClient.createLabel(
+        name,
+        normalizeHexColor(label.color),
+        input.config.linearTeamId
+      );
+      linearLabelIdByName.set(key, created.id);
+      labelIds.push(created.id);
+    }
+
+    return Array.from(new Set(labelIds));
+  };
+
+  const toShortcutLabelsFromIssue = (
+    issue: LinearIssue
+  ): Array<{ name: string; color?: string; description?: string; external_id?: string }> => {
+    const uniqueByName = new Map<string, { name: string; color?: string }>();
+    for (const label of issue.labels) {
+      const name = label.name?.trim();
+      if (!name) continue;
+      const key = normalizeName(name);
+      if (uniqueByName.has(key)) continue;
+      uniqueByName.set(key, {
+        name,
+        color: normalizeHexColor(label.color),
+      });
+    }
+    return Array.from(uniqueByName.values());
+  };
+
+  const toNormalizedShortcutLabelNames = (issue: LinearIssue): string[] =>
+    toShortcutLabelsFromIssue(issue).map((label) => normalizeName(label.name));
 
   const shortcutStateTypeById = buildShortcutStateTypeById(shortcutWorkflows);
   const shortcutStateIdByType = buildShortcutStateIdByType(shortcutWorkflows);
@@ -511,6 +681,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
       }
 
       const nextDescription = toLinearDescription(story);
+      const nextLabelIds = await resolveLinearLabelIdsForStory(story);
       const nextStateId = linearStateIdByShortcutType
         ? mapStoryToLinearStateId(
             story,
@@ -528,7 +699,8 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
               existingIssue,
               story,
               nextDescription,
-              nextStateId
+              nextStateId,
+              nextLabelIds
             )
           ) {
             events.push(
@@ -547,6 +719,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
               title: story.name,
               description: nextDescription,
               stateId: nextStateId,
+              labelIds: nextLabelIds,
               priority: mapIssuePriorityFromStory(story),
               estimate: story.estimate,
             });
@@ -570,6 +743,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
             title: story.name,
             description: nextDescription,
             stateId: nextStateId,
+            labelIds: nextLabelIds,
             priority: mapIssuePriorityFromStory(story),
             estimate: story.estimate,
           });
@@ -606,6 +780,27 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
                 entityType: 'issue',
                 entityId: targetIssue.id,
                 message: `Created ${createdComments} comment(s) on Linear issue ${targetIssue.identifier} from Shortcut story ${story.id}`,
+              })
+            );
+          }
+        }
+
+        if (input.config.includeAttachments && targetIssue) {
+          const createdAttachments = await syncShortcutAttachmentsToLinearIssue({
+            shortcutStory: story,
+            linearClient,
+            issueId: targetIssue.id,
+          });
+
+          if (createdAttachments > 0) {
+            events.push(
+              createEvent({
+                level: 'INFO',
+                source: 'shortcut',
+                action: 'create',
+                entityType: 'issue',
+                entityId: targetIssue.id,
+                message: `Created ${createdAttachments} attachment(s) on Linear issue ${targetIssue.identifier} from Shortcut story ${story.id}`,
               })
             );
           }
@@ -676,6 +871,13 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
       }
 
       const nextDescription = toShortcutDescription(issue);
+      const nextLabels = toShortcutLabelsFromIssue(issue);
+      const nextLabelNames = toNormalizedShortcutLabelNames(issue);
+      const nextExternalLinks = input.config.includeAttachments
+        ? extractLinearAttachmentUrls(
+            await linearClient.getIssueAttachments(issue.id, { includeAllPages: true })
+          )
+        : undefined;
       const nextWorkflowStateId =
         mapIssueToShortcutStateId(issue, shortcutStateIdByType) ??
         fallbackShortcutWorkflowStateId;
@@ -689,7 +891,9 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
               existingStory,
               issue,
               nextDescription,
-              nextWorkflowStateId
+              nextWorkflowStateId,
+              nextLabelNames,
+              nextExternalLinks
             )
           ) {
             events.push(
@@ -709,6 +913,8 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
               description: nextDescription,
               story_type: mapStoryTypeFromIssue(issue),
               workflow_state_id: nextWorkflowStateId,
+              labels: nextLabels,
+              external_links: nextExternalLinks,
               estimate: issue.estimate,
             });
             storyById.set(updated.id, updated);
@@ -735,6 +941,8 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
             description: nextDescription,
             story_type: mapStoryTypeFromIssue(issue),
             workflow_state_id: nextWorkflowStateId,
+            labels: nextLabels,
+            external_links: nextExternalLinks,
             estimate: issue.estimate,
           });
           storyById.set(created.id, created);

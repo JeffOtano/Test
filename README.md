@@ -71,6 +71,14 @@ npm run test:run
 npm run build
 ```
 
+To run live API smoke validation with your own keys:
+
+```bash
+npm run test:live
+```
+
+See [LIVE_TESTING.md](LIVE_TESTING.md) for environment setup and report output.
+
 Run infrastructure schema bootstrap (for production mode):
 
 ```bash

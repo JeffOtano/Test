@@ -32,6 +32,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:live": "tsx scripts/live-sync-smoke.ts",
     "infra:init": "tsx scripts/infra-init.ts",
     "worker:sync": "tsx src/worker/sync-worker.ts",
     "worker:scheduler": "tsx src/worker/scheduler.ts"

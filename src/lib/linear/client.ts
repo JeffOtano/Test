@@ -320,6 +320,55 @@ export class LinearClient {
     );
   }
 
+  async getIssue(issueId: string): Promise<LinearIssue> {
+    const issue = await this.client.issue(issueId);
+    const state = await issue.state;
+    const assignee = await issue.assignee;
+    const project = await issue.project;
+    const cycle = await issue.cycle;
+    const labels = await issue.labels();
+
+    return {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      description: issue.description ?? undefined,
+      state: state
+        ? {
+            id: state.id,
+            name: state.name,
+            type: state.type as LinearWorkflowState['type'],
+            position: state.position,
+          }
+        : { id: '', name: 'Unknown', type: 'backlog', position: 0 },
+      priority: issue.priority,
+      estimate: issue.estimate ?? undefined,
+      labels: labels.nodes.map((l) => ({ id: l.id, name: l.name, color: l.color })),
+      assignee: assignee
+        ? {
+            id: assignee.id,
+            name: assignee.name,
+            email: assignee.email,
+            avatarUrl: assignee.avatarUrl ?? undefined,
+          }
+        : undefined,
+      project: project
+        ? { id: project.id, name: project.name, state: String(project.state), teamIds: [] }
+        : undefined,
+      cycle: cycle
+        ? {
+            id: cycle.id,
+            number: cycle.number,
+            startsAt: toIsoString(cycle.startsAt),
+            endsAt: toIsoString(cycle.endsAt),
+          }
+        : undefined,
+      createdAt: toIsoString(issue.createdAt),
+      updatedAt: toIsoString(issue.updatedAt),
+      completedAt: issue.completedAt ? toIsoString(issue.completedAt) : undefined,
+    };
+  }
+
   async createIssue(params: {
     teamId: string;
     title: string;
@@ -462,6 +511,11 @@ export class LinearClient {
       createdAt: toIsoString(attachment.createdAt),
       updatedAt: toIsoString(attachment.updatedAt),
     }));
+  }
+
+  async archiveIssue(issueId: string): Promise<void> {
+    const issue = await this.client.issue(issueId);
+    await issue.archive();
   }
 
   async createAttachment(issueId: string, url: string, title: string): Promise<{ id: string }> {

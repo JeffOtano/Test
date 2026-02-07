@@ -16,10 +16,6 @@ interface LiveSmokeConfig {
   linearTeamId: string;
   shortcutTeamId?: string;
   prefix: string;
-  runReverse: boolean;
-  cleanup: boolean;
-  includeComments: boolean;
-  includeAttachments: boolean;
 }
 
 interface CheckRecord {
@@ -83,14 +79,6 @@ function loadEnvFile(filePath: string): void {
       process.env[key] = value;
     }
   }
-}
-
-function normalizeBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (!value) return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
-  return fallback;
 }
 
 function requireEnv(
@@ -207,10 +195,6 @@ async function main(): Promise<void> {
     linearTeamId,
     shortcutTeamId,
     prefix: process.env.GOODBYE_LIVE_PREFIX?.trim() || 'GS-LIVE',
-    runReverse: normalizeBoolean(process.env.GOODBYE_LIVE_RUN_REVERSE, true),
-    cleanup: normalizeBoolean(process.env.GOODBYE_LIVE_CLEANUP, true),
-    includeComments: normalizeBoolean(process.env.GOODBYE_LIVE_INCLUDE_COMMENTS, true),
-    includeAttachments: normalizeBoolean(process.env.GOODBYE_LIVE_INCLUDE_ATTACHMENTS, true),
   };
 
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -223,10 +207,6 @@ async function main(): Promise<void> {
       linearTeamId: config.linearTeamId,
       shortcutTeamId: config.shortcutTeamId,
       prefix: config.prefix,
-      runReverse: config.runReverse,
-      cleanup: config.cleanup,
-      includeComments: config.includeComments,
-      includeAttachments: config.includeAttachments,
     },
     checks: [],
     fixture: {
@@ -338,11 +318,9 @@ async function main(): Promise<void> {
     createdStoryId = createdStory.id;
     report.fixture.shortcutStoryId = createdStory.id;
 
-    const createdStoryComment = config.includeComments
-      ? await shortcut.createStoryComment(createdStory.id, {
-          text: `${config.prefix} comment phase1 ${runId}`,
-        })
-      : undefined;
+    const createdStoryComment = await shortcut.createStoryComment(createdStory.id, {
+      text: `${config.prefix} comment phase1 ${runId}`,
+    });
 
     const firstCycle = await runSyncCycle({
       shortcutToken: config.shortcutToken,
@@ -352,8 +330,8 @@ async function main(): Promise<void> {
         conflictPolicy: 'NEWEST_WINS',
         shortcutTeamId: sourceTeamId,
         linearTeamId: config.linearTeamId,
-        includeComments: config.includeComments,
-        includeAttachments: config.includeAttachments,
+        includeComments: true,
+        includeAttachments: true,
       },
       triggerSource: 'system',
       triggerReason: `live smoke phase1 ${runId}`,
@@ -415,31 +393,27 @@ async function main(): Promise<void> {
       `Linear issue missing label ${labelOneName}`
     );
 
-    if (config.includeAttachments) {
-      const attachments = await linear.getIssueAttachments(linearIssue.id, {
-        includeAllPages: true,
-      });
-      appendCheck(
-        report,
-        'Linear issue includes synced attachment/link',
-        attachments.some((attachment) => attachment.url === linkOne),
-        `Linear issue missing attachment ${linkOne}`
-      );
-    }
+    const attachments = await linear.getIssueAttachments(linearIssue.id, {
+      includeAllPages: true,
+    });
+    appendCheck(
+      report,
+      'Linear issue includes synced attachment/link',
+      attachments.some((attachment) => attachment.url === linkOne),
+      `Linear issue missing attachment ${linkOne}`
+    );
 
-    if (config.includeComments && createdStoryComment) {
-      const comments = await linear.getIssueComments(linearIssue.id, {
-        includeAllPages: true,
-      });
-      appendCheck(
-        report,
-        'Linear issue includes synced Shortcut comment',
-        comments.some((comment) =>
-          comment.body.includes(`Shortcut Comment ID: ${createdStoryComment.id}`)
-        ),
-        `Linear issue missing comment marker for ${createdStoryComment.id}`
-      );
-    }
+    const comments = await linear.getIssueComments(linearIssue.id, {
+      includeAllPages: true,
+    });
+    appendCheck(
+      report,
+      'Linear issue includes synced Shortcut comment',
+      comments.some((comment) =>
+        comment.body.includes(`Shortcut Comment ID: ${createdStoryComment.id}`)
+      ),
+      `Linear issue missing comment marker for ${createdStoryComment.id}`
+    );
 
     const shortcutStateTypeById = buildShortcutStateTypeById(shortcutWorkflows);
     const linearWorkflowStates = await linear.getWorkflowStates(config.linearTeamId);
@@ -473,15 +447,13 @@ async function main(): Promise<void> {
         { name: labelOneName, color: '#2563EB' },
         { name: labelTwoName, color: '#0891B2' },
       ],
-      external_links: config.includeAttachments ? [linkOne, linkTwo] : [linkOne],
+      external_links: [linkOne, linkTwo],
       estimate: 3,
     });
 
-    const updatedStoryComment = config.includeComments
-      ? await shortcut.createStoryComment(createdStory.id, {
-          text: `${config.prefix} comment phase2 ${runId}`,
-        })
-      : undefined;
+    const updatedStoryComment = await shortcut.createStoryComment(createdStory.id, {
+      text: `${config.prefix} comment phase2 ${runId}`,
+    });
 
     const secondCycle = await runSyncCycle({
       shortcutToken: config.shortcutToken,
@@ -491,8 +463,8 @@ async function main(): Promise<void> {
         conflictPolicy: 'NEWEST_WINS',
         shortcutTeamId: sourceTeamId,
         linearTeamId: config.linearTeamId,
-        includeComments: config.includeComments,
-        includeAttachments: config.includeAttachments,
+        includeComments: true,
+        includeAttachments: true,
       },
       cursors: firstCycle.cursors,
       triggerSource: 'system',
@@ -528,158 +500,142 @@ async function main(): Promise<void> {
       `Linear issue missing expected labels ${labelOneName}/${labelTwoName}`
     );
 
-    if (config.includeAttachments) {
-      const attachmentsAfterUpdate = await linear.getIssueAttachments(createdIssue.id, {
-        includeAllPages: true,
-      });
-      appendCheck(
-        report,
-        'Linear issue reflects updated links as attachments',
-        attachmentsAfterUpdate.some((attachment) => attachment.url === linkTwo),
-        `Linear issue missing attachment ${linkTwo}`
-      );
-    }
+    const attachmentsAfterUpdate = await linear.getIssueAttachments(createdIssue.id, {
+      includeAllPages: true,
+    });
+    appendCheck(
+      report,
+      'Linear issue reflects updated links as attachments',
+      attachmentsAfterUpdate.some((attachment) => attachment.url === linkTwo),
+      `Linear issue missing attachment ${linkTwo}`
+    );
 
-    if (config.includeComments && updatedStoryComment) {
-      const commentsAfterUpdate = await linear.getIssueComments(createdIssue.id, {
-        includeAllPages: true,
-      });
-      appendCheck(
-        report,
-        'Linear issue received second synced Shortcut comment',
-        commentsAfterUpdate.some((comment) =>
-          comment.body.includes(`Shortcut Comment ID: ${updatedStoryComment.id}`)
-        ),
-        `Linear issue missing phase2 comment marker for ${updatedStoryComment.id}`
-      );
-    }
+    const commentsAfterUpdate = await linear.getIssueComments(createdIssue.id, {
+      includeAllPages: true,
+    });
+    appendCheck(
+      report,
+      'Linear issue received second synced Shortcut comment',
+      commentsAfterUpdate.some((comment) =>
+        comment.body.includes(`Shortcut Comment ID: ${updatedStoryComment.id}`)
+      ),
+      `Linear issue missing phase2 comment marker for ${updatedStoryComment.id}`
+    );
 
-    if (config.runReverse) {
-      const reverseLabelName = `${config.prefix.toLowerCase()}-${runId}-reverse`;
-      const reverseLink = `https://example.com/${runId}/linear-reverse`;
+    const reverseLabelName = `${config.prefix.toLowerCase()}-${runId}-reverse`;
+    const reverseLink = `https://example.com/${runId}/linear-reverse`;
 
-      report.fixture.createdLabelNames.push(reverseLabelName);
-      report.fixture.createdLinks.push(reverseLink);
+    report.fixture.createdLabelNames.push(reverseLabelName);
+    report.fixture.createdLinks.push(reverseLink);
 
-      const reverseLabel = await linear.createLabel(
-        reverseLabelName,
-        '#16A34A',
-        config.linearTeamId
-      );
+    const reverseLabel = await linear.createLabel(
+      reverseLabelName,
+      '#16A34A',
+      config.linearTeamId
+    );
 
-      const nextLabelIds = Array.from(
-        new Set([...issueAfterUpdate.labels.map((label) => label.id), reverseLabel.id])
-      );
+    const nextLabelIds = Array.from(
+      new Set([...issueAfterUpdate.labels.map((label) => label.id), reverseLabel.id])
+    );
 
-      await linear.updateIssue(linearIssue.id, {
-        title: `${config.prefix} ${runId} reverse`,
-        description: [
-          `${config.prefix} Linear -> Shortcut live smoke`,
-          `Run ID: ${runId}`,
-          'Phase: reverse',
-        ].join('\n'),
-        labelIds: nextLabelIds,
-        estimate: 5,
-      });
+    await linear.updateIssue(linearIssue.id, {
+      title: `${config.prefix} ${runId} reverse`,
+      description: [
+        `${config.prefix} Linear -> Shortcut live smoke`,
+        `Run ID: ${runId}`,
+        'Phase: reverse',
+      ].join('\n'),
+      labelIds: nextLabelIds,
+      estimate: 5,
+    });
 
-      const reverseComment = config.includeComments
-        ? await linear.createComment(
-            linearIssue.id,
-            `${config.prefix} linear comment reverse ${runId}`
-          )
-        : undefined;
+    const reverseComment = await linear.createComment(
+      linearIssue.id,
+      `${config.prefix} linear comment reverse ${runId}`
+    );
 
-      if (config.includeAttachments) {
-        await linear.createAttachment(linearIssue.id, reverseLink, 'Live Smoke Reverse Link');
-      }
+    await linear.createAttachment(linearIssue.id, reverseLink, 'Live Smoke Reverse Link');
 
-      const thirdCycle = await runSyncCycle({
-        shortcutToken: config.shortcutToken,
-        linearToken: config.linearToken,
-        config: {
-          direction: 'LINEAR_TO_SHORTCUT',
-          conflictPolicy: 'NEWEST_WINS',
-          shortcutTeamId: sourceTeamId,
-          linearTeamId: config.linearTeamId,
-          includeComments: config.includeComments,
-          includeAttachments: config.includeAttachments,
-        },
-        cursors: secondCycle.cursors,
-        triggerSource: 'system',
-        triggerReason: `live smoke reverse ${runId}`,
-      });
+    const thirdCycle = await runSyncCycle({
+      shortcutToken: config.shortcutToken,
+      linearToken: config.linearToken,
+      config: {
+        direction: 'LINEAR_TO_SHORTCUT',
+        conflictPolicy: 'NEWEST_WINS',
+        shortcutTeamId: sourceTeamId,
+        linearTeamId: config.linearTeamId,
+        includeComments: true,
+        includeAttachments: true,
+      },
+      cursors: secondCycle.cursors,
+      triggerSource: 'system',
+      triggerReason: `live smoke reverse ${runId}`,
+    });
 
-      appendCheck(
-        report,
-        'Reverse sync cycle completed without sync errors',
-        thirdCycle.delta.errors === 0,
-        `Reverse cycle reported ${thirdCycle.delta.errors} errors`
-      );
+    appendCheck(
+      report,
+      'Reverse sync cycle completed without sync errors',
+      thirdCycle.delta.errors === 0,
+      `Reverse cycle reported ${thirdCycle.delta.errors} errors`
+    );
 
-      const storyAfterReverse = await shortcut.getStory(createdStory.id);
-      appendCheck(
-        report,
-        'Shortcut story reflects reverse Linear title',
-        storyAfterReverse.name.includes('reverse'),
-        `Shortcut story title did not update from Linear. Got "${storyAfterReverse.name}"`
-      );
-      appendCheck(
-        report,
-        'Shortcut story reflects reverse label from Linear',
-        storyAfterReverse.labels.some((label) => label.name === reverseLabelName),
-        `Shortcut story missing reverse label ${reverseLabelName}`
-      );
+    const storyAfterReverse = await shortcut.getStory(createdStory.id);
+    appendCheck(
+      report,
+      'Shortcut story reflects reverse Linear title',
+      storyAfterReverse.name.includes('reverse'),
+      `Shortcut story title did not update from Linear. Got "${storyAfterReverse.name}"`
+    );
+    appendCheck(
+      report,
+      'Shortcut story reflects reverse label from Linear',
+      storyAfterReverse.labels.some((label) => label.name === reverseLabelName),
+      `Shortcut story missing reverse label ${reverseLabelName}`
+    );
 
-      if (config.includeAttachments) {
-        const reverseLinks = extractStoryLinks(storyAfterReverse);
-        appendCheck(
-          report,
-          'Shortcut story reflects reverse attachment/link from Linear',
-          reverseLinks.includes(reverseLink),
-          `Shortcut story missing reverse link ${reverseLink}`
-        );
-      }
+    const reverseLinks = extractStoryLinks(storyAfterReverse);
+    appendCheck(
+      report,
+      'Shortcut story reflects reverse attachment/link from Linear',
+      reverseLinks.includes(reverseLink),
+      `Shortcut story missing reverse link ${reverseLink}`
+    );
 
-      if (config.includeComments && reverseComment) {
-        const storyCommentsAfterReverse = await shortcut.getStoryComments(createdStory.id);
-        appendCheck(
-          report,
-          'Shortcut story received reverse Linear comment',
-          storyCommentsAfterReverse.some((comment) =>
-            comment.text.includes(`Linear Comment ID: ${reverseComment.id}`)
-          ),
-          `Shortcut story missing reverse comment marker for ${reverseComment.id}`
-        );
-      }
-    }
+    const storyCommentsAfterReverse = await shortcut.getStoryComments(createdStory.id);
+    appendCheck(
+      report,
+      'Shortcut story received reverse Linear comment',
+      storyCommentsAfterReverse.some((comment) =>
+        comment.text.includes(`Linear Comment ID: ${reverseComment.id}`)
+      ),
+      `Shortcut story missing reverse comment marker for ${reverseComment.id}`
+    );
   } catch (error) {
     report.errors.push(error instanceof Error ? error.message : 'Unknown smoke test error');
     throw error;
   } finally {
-    if (config.cleanup) {
-      try {
-        if (createdStoryId !== undefined) {
-          await shortcut.updateStory(createdStoryId, { archived: true });
-        }
-      } catch (error) {
-        report.errors.push(
-          `Cleanup failed for Shortcut story ${createdStoryId}: ${
-            error instanceof Error ? error.message : 'Unknown error'
-          }`
-        );
+    try {
+      if (createdStoryId !== undefined) {
+        await shortcut.updateStory(createdStoryId, { archived: true });
       }
+    } catch (error) {
+      report.errors.push(
+        `Cleanup failed for Shortcut story ${createdStoryId}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
+      );
+    }
 
-      try {
-        if (createdIssueId) {
-          await linear.archiveIssue(createdIssueId);
-        }
-      } catch (error) {
-        report.errors.push(
-          `Cleanup failed for Linear issue ${createdIssueId}: ${
-            error instanceof Error ? error.message : 'Unknown error'
-          }`
-        );
+    try {
+      if (createdIssueId) {
+        await linear.archiveIssue(createdIssueId);
       }
+    } catch (error) {
+      report.errors.push(
+        `Cleanup failed for Linear issue ${createdIssueId}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`
+      );
     }
 
     const endedAt = Date.now();

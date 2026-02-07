@@ -7,11 +7,11 @@ Use this to verify real Shortcut/Linear migration + sync behavior with your own 
 `npm run test:live` runs an end-to-end smoke scenario:
 
 1. Validates Shortcut + Linear credentials.
-2. Creates a Shortcut fixture story with labels, description, links, estimate (and comment if enabled).
+2. Creates a Shortcut fixture story with labels, description, links, estimate, and comment.
 3. Runs `SHORTCUT_TO_LINEAR` sync and verifies the Linear issue carries the same data.
 4. Updates the Shortcut story and verifies update propagation.
-5. Optionally runs `LINEAR_TO_SHORTCUT` reverse checks.
-6. Optionally archives created fixture records.
+5. Runs `LINEAR_TO_SHORTCUT` reverse checks.
+6. Archives created fixture records.
 7. Writes a JSON report under `artifacts/live/`.
 
 ## Required environment
@@ -25,10 +25,6 @@ Set at least:
 Optional:
 
 - `GOODBYE_LIVE_SHORTCUT_TEAM_ID` to scope to a specific Shortcut team.
-- `GOODBYE_LIVE_RUN_REVERSE=true|false` (default `true`).
-- `GOODBYE_LIVE_INCLUDE_COMMENTS=true|false` (default `true`).
-- `GOODBYE_LIVE_INCLUDE_ATTACHMENTS=true|false` (default `true`).
-- `GOODBYE_LIVE_CLEANUP=true|false` (default `true`).
 - `GOODBYE_LIVE_PREFIX=GS-LIVE` for fixture naming.
 
 ## Run
@@ -53,5 +49,4 @@ It includes:
 ## Notes
 
 - This script writes real records to your workspace.
-- Keep `GOODBYE_LIVE_CLEANUP=true` for normal runs.
 - If a run fails before cleanup, use the report file to manually find fixture IDs.

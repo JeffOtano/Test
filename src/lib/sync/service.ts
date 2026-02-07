@@ -16,7 +16,14 @@ import {
 } from '../db';
 import { LinearClient } from '../linear/client';
 import { ShortcutClient } from '../shortcut/client';
-import { LinearIssue, ShortcutStory } from '@/types';
+import {
+  buildLinearStateIdByShortcutType,
+  buildShortcutStateIdByType,
+  buildShortcutStateTypeById,
+  mapIssueToShortcutStateId,
+  mapStoryToLinearStateId,
+} from '../workflow-state-mapping';
+import { LinearComment, LinearIssue, ShortcutComment, ShortcutStory } from '@/types';
 
 const SYNC_METADATA_MARKER = 'Synced by Goodbye Shortcut';
 
@@ -100,6 +107,23 @@ function extractLinearIssueIdFromStory(story: Pick<ShortcutStory, 'description'>
   return match[1];
 }
 
+function extractShortcutCommentIdFromLinearComment(
+  comment: Pick<LinearComment, 'body'>
+): number | undefined {
+  const match = comment.body.match(/Shortcut Comment ID:\s*(\d+)/i);
+  if (!match) return undefined;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function extractLinearCommentIdFromShortcutComment(
+  comment: Pick<ShortcutComment, 'text'>
+): string | undefined {
+  const match = comment.text.match(/Linear Comment ID:\s*([A-Za-z0-9\-_]+)/i);
+  if (!match) return undefined;
+  return match[1];
+}
+
 function stripSyncMetadata(text: string | undefined | null): string {
   const value = (text ?? '').trim();
   const markerIndex = value.indexOf(`---\n${SYNC_METADATA_MARKER}`);
@@ -155,6 +179,34 @@ function toLinearDescription(story: ShortcutStory): string {
   return description ? `${description}\n\n${metadata.join('\n')}` : metadata.join('\n');
 }
 
+function toLinearCommentBody(comment: ShortcutComment): string {
+  const body = comment.text.trim();
+  const metadata = [
+    '---',
+    SYNC_METADATA_MARKER,
+    `Shortcut Comment ID: ${comment.id}`,
+    `Shortcut Comment Author ID: ${comment.author_id}`,
+    `Shortcut Comment Created At: ${comment.created_at}`,
+    `Shortcut Comment Updated At: ${comment.updated_at}`,
+  ];
+
+  return body ? `${body}\n\n${metadata.join('\n')}` : metadata.join('\n');
+}
+
+function toShortcutCommentText(comment: LinearComment): string {
+  const body = comment.body.trim();
+  const metadata = [
+    '---',
+    SYNC_METADATA_MARKER,
+    `Linear Comment ID: ${comment.id}`,
+    `Linear Comment Author ID: ${comment.user.id}`,
+    `Linear Comment Created At: ${comment.createdAt}`,
+    `Linear Comment Updated At: ${comment.updatedAt}`,
+  ];
+
+  return body ? `${body}\n\n${metadata.join('\n')}` : metadata.join('\n');
+}
+
 function parseDateMs(value: string | undefined): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
@@ -203,27 +255,108 @@ function maxUpdatedAt(values: string[], fallback?: string): string | undefined {
 function isLinearIssueEquivalentToStory(
   issue: LinearIssue,
   story: ShortcutStory,
-  expectedDescription: string
+  expectedDescription: string,
+  expectedStateId?: string
 ): boolean {
   return (
     issue.title.trim() === story.name.trim() &&
     stripSyncMetadata(issue.description) === stripSyncMetadata(expectedDescription) &&
     issue.priority === mapIssuePriorityFromStory(story) &&
-    (issue.estimate ?? undefined) === (story.estimate ?? undefined)
+    (issue.estimate ?? undefined) === (story.estimate ?? undefined) &&
+    (expectedStateId === undefined || issue.state.id === expectedStateId)
   );
 }
 
 function isShortcutStoryEquivalentToIssue(
   story: ShortcutStory,
   issue: LinearIssue,
-  expectedDescription: string
+  expectedDescription: string,
+  expectedWorkflowStateId?: number
 ): boolean {
   return (
     story.name.trim() === issue.title.trim() &&
     stripSyncMetadata(story.description) === stripSyncMetadata(expectedDescription) &&
     story.story_type === mapStoryTypeFromIssue(issue) &&
-    (story.estimate ?? undefined) === (issue.estimate ?? undefined)
+    (story.estimate ?? undefined) === (issue.estimate ?? undefined) &&
+    (expectedWorkflowStateId === undefined ||
+      story.workflow_state_id === expectedWorkflowStateId)
   );
+}
+
+async function syncShortcutCommentsToLinearIssue(params: {
+  shortcutClient: ShortcutClient;
+  linearClient: LinearClient;
+  story: ShortcutStory;
+  issueId: string;
+}): Promise<number> {
+  const sourceComments = await params.shortcutClient.getStoryComments(params.story.id);
+  const linearComments = await params.linearClient.getIssueComments(params.issueId, {
+    includeAllPages: true,
+  });
+
+  const existingShortcutCommentIds = new Set<number>();
+  for (const comment of linearComments) {
+    const shortcutCommentId = extractShortcutCommentIdFromLinearComment(comment);
+    if (shortcutCommentId !== undefined) {
+      existingShortcutCommentIds.add(shortcutCommentId);
+    }
+  }
+
+  let created = 0;
+  for (const comment of sourceComments) {
+    if (extractLinearCommentIdFromShortcutComment(comment)) {
+      continue;
+    }
+
+    if (existingShortcutCommentIds.has(comment.id)) {
+      continue;
+    }
+
+    await params.linearClient.createComment(params.issueId, toLinearCommentBody(comment));
+    created += 1;
+  }
+
+  return created;
+}
+
+async function syncLinearCommentsToShortcutStory(params: {
+  shortcutClient: ShortcutClient;
+  linearClient: LinearClient;
+  issue: LinearIssue;
+  storyId: number;
+}): Promise<number> {
+  const sourceComments = await params.linearClient.getIssueComments(params.issue.id, {
+    includeAllPages: true,
+  });
+  const shortcutComments = await params.shortcutClient.getStoryComments(params.storyId);
+
+  const existingLinearCommentIds = new Set<string>();
+  for (const comment of shortcutComments) {
+    const linearCommentId = extractLinearCommentIdFromShortcutComment(comment);
+    if (linearCommentId) {
+      existingLinearCommentIds.add(linearCommentId);
+    }
+  }
+
+  let created = 0;
+  for (const comment of sourceComments) {
+    if (extractShortcutCommentIdFromLinearComment(comment) !== undefined) {
+      continue;
+    }
+
+    if (existingLinearCommentIds.has(comment.id)) {
+      continue;
+    }
+
+    await params.shortcutClient.createStoryComment(params.storyId, {
+      text: toShortcutCommentText(comment),
+      created_at: comment.createdAt,
+      updated_at: comment.updatedAt,
+    });
+    created += 1;
+  }
+
+  return created;
 }
 
 function defaultDelta(): SyncDeltaStats {
@@ -237,18 +370,6 @@ function defaultDelta(): SyncDeltaStats {
     conflicts: 0,
     errors: 0,
   };
-}
-
-async function getDefaultShortcutWorkflowStateId(
-  shortcut: ShortcutClient
-): Promise<number | undefined> {
-  const workflows = await shortcut.getWorkflows();
-  for (const workflow of workflows) {
-    const preferred = workflow.states.find((state) => state.type === 'unstarted');
-    if (preferred) return preferred.id;
-    if (workflow.states.length > 0) return workflow.states[0].id;
-  }
-  return undefined;
 }
 
 export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleResult> {
@@ -285,16 +406,29 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
     includeAllPages: true,
   });
 
-  const defaultWorkflowStatePromise =
-    input.config.direction === 'SHORTCUT_TO_LINEAR'
-      ? Promise.resolve<number | undefined>(undefined)
-      : getDefaultShortcutWorkflowStateId(shortcutClient);
+  const shortcutWorkflowsPromise = shortcutClient.getWorkflows();
+  const linearWorkflowStatesPromise =
+    input.config.direction === 'LINEAR_TO_SHORTCUT'
+      ? Promise.resolve([])
+      : linearClient.getWorkflowStates(input.config.linearTeamId);
 
-  const [stories, issues, defaultWorkflowStateId] = await Promise.all([
+  const [stories, issues, shortcutWorkflows, linearWorkflowStates] = await Promise.all([
     storiesPromise,
     issuesPromise,
-    defaultWorkflowStatePromise,
+    shortcutWorkflowsPromise,
+    linearWorkflowStatesPromise,
   ]);
+
+  const shortcutStateTypeById = buildShortcutStateTypeById(shortcutWorkflows);
+  const shortcutStateIdByType = buildShortcutStateIdByType(shortcutWorkflows);
+  const linearStateIdByShortcutType =
+    input.config.direction === 'LINEAR_TO_SHORTCUT'
+      ? undefined
+      : buildLinearStateIdByShortcutType(linearWorkflowStates);
+  const fallbackShortcutWorkflowStateId =
+    shortcutStateIdByType.unstarted ??
+    shortcutStateIdByType.started ??
+    shortcutStateIdByType.done;
 
   delta.storiesScanned = stories.length;
   delta.issuesScanned = issues.length;
@@ -377,10 +511,26 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
       }
 
       const nextDescription = toLinearDescription(story);
+      const nextStateId = linearStateIdByShortcutType
+        ? mapStoryToLinearStateId(
+            story,
+            shortcutStateTypeById,
+            linearStateIdByShortcutType
+          )
+        : undefined;
 
       try {
+        let targetIssue: LinearIssue | undefined;
+
         if (existingIssue) {
-          if (isLinearIssueEquivalentToStory(existingIssue, story, nextDescription)) {
+          if (
+            isLinearIssueEquivalentToStory(
+              existingIssue,
+              story,
+              nextDescription,
+              nextStateId
+            )
+          ) {
             events.push(
               createEvent({
                 level: 'INFO',
@@ -391,32 +541,35 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
                 message: `No changes needed for Linear issue ${existingIssue.identifier}`,
               })
             );
-            continue;
+            targetIssue = existingIssue;
+          } else {
+            const updated = await linearClient.updateIssue(existingIssue.id, {
+              title: story.name,
+              description: nextDescription,
+              stateId: nextStateId,
+              priority: mapIssuePriorityFromStory(story),
+              estimate: story.estimate,
+            });
+            issueById.set(updated.id, updated);
+            delta.updatedInLinear += 1;
+            events.push(
+              createEvent({
+                level: 'INFO',
+                source: 'shortcut',
+                action: 'update',
+                entityType: 'issue',
+                entityId: updated.id,
+                message: `Updated Linear issue ${updated.identifier} from Shortcut story ${story.id}`,
+              })
+            );
+            targetIssue = updated;
           }
-
-          const updated = await linearClient.updateIssue(existingIssue.id, {
-            title: story.name,
-            description: nextDescription,
-            priority: mapIssuePriorityFromStory(story),
-            estimate: story.estimate,
-          });
-          issueById.set(updated.id, updated);
-          delta.updatedInLinear += 1;
-          events.push(
-            createEvent({
-              level: 'INFO',
-              source: 'shortcut',
-              action: 'update',
-              entityType: 'issue',
-              entityId: updated.id,
-              message: `Updated Linear issue ${updated.identifier} from Shortcut story ${story.id}`,
-            })
-          );
         } else {
           const created = await linearClient.createIssue({
             teamId: input.config.linearTeamId,
             title: story.name,
             description: nextDescription,
+            stateId: nextStateId,
             priority: mapIssuePriorityFromStory(story),
             estimate: story.estimate,
           });
@@ -433,6 +586,29 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
               message: `Created Linear issue ${created.identifier} from Shortcut story ${story.id}`,
             })
           );
+          targetIssue = created;
+        }
+
+        if (input.config.includeComments && targetIssue) {
+          const createdComments = await syncShortcutCommentsToLinearIssue({
+            shortcutClient,
+            linearClient,
+            story,
+            issueId: targetIssue.id,
+          });
+
+          if (createdComments > 0) {
+            events.push(
+              createEvent({
+                level: 'INFO',
+                source: 'shortcut',
+                action: 'create',
+                entityType: 'issue',
+                entityId: targetIssue.id,
+                message: `Created ${createdComments} comment(s) on Linear issue ${targetIssue.identifier} from Shortcut story ${story.id}`,
+              })
+            );
+          }
         }
       } catch (error) {
         delta.errors += 1;
@@ -500,10 +676,22 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
       }
 
       const nextDescription = toShortcutDescription(issue);
+      const nextWorkflowStateId =
+        mapIssueToShortcutStateId(issue, shortcutStateIdByType) ??
+        fallbackShortcutWorkflowStateId;
 
       try {
+        let targetStory: ShortcutStory | undefined;
+
         if (existingStory) {
-          if (isShortcutStoryEquivalentToIssue(existingStory, issue, nextDescription)) {
+          if (
+            isShortcutStoryEquivalentToIssue(
+              existingStory,
+              issue,
+              nextDescription,
+              nextWorkflowStateId
+            )
+          ) {
             events.push(
               createEvent({
                 level: 'INFO',
@@ -514,29 +702,31 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
                 message: `No changes needed for Shortcut story ${existingStory.id}`,
               })
             );
-            continue;
+            targetStory = existingStory;
+          } else {
+            const updated = await shortcutClient.updateStory(existingStory.id, {
+              name: issue.title,
+              description: nextDescription,
+              story_type: mapStoryTypeFromIssue(issue),
+              workflow_state_id: nextWorkflowStateId,
+              estimate: issue.estimate,
+            });
+            storyById.set(updated.id, updated);
+            delta.updatedInShortcut += 1;
+            events.push(
+              createEvent({
+                level: 'INFO',
+                source: 'linear',
+                action: 'update',
+                entityType: 'story',
+                entityId: String(updated.id),
+                message: `Updated Shortcut story ${updated.id} from Linear issue ${issue.identifier}`,
+              })
+            );
+            targetStory = updated;
           }
-
-          const updated = await shortcutClient.updateStory(existingStory.id, {
-            name: issue.title,
-            description: nextDescription,
-            story_type: mapStoryTypeFromIssue(issue),
-            estimate: issue.estimate,
-          });
-          storyById.set(updated.id, updated);
-          delta.updatedInShortcut += 1;
-          events.push(
-            createEvent({
-              level: 'INFO',
-              source: 'linear',
-              action: 'update',
-              entityType: 'story',
-              entityId: String(updated.id),
-              message: `Updated Shortcut story ${updated.id} from Linear issue ${issue.identifier}`,
-            })
-          );
         } else {
-          if (!defaultWorkflowStateId) {
+          if (!nextWorkflowStateId) {
             throw new Error('No Shortcut workflow state available for creating stories');
           }
 
@@ -544,7 +734,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
             name: issue.title,
             description: nextDescription,
             story_type: mapStoryTypeFromIssue(issue),
-            workflow_state_id: defaultWorkflowStateId,
+            workflow_state_id: nextWorkflowStateId,
             estimate: issue.estimate,
           });
           storyById.set(created.id, created);
@@ -560,6 +750,29 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
               message: `Created Shortcut story ${created.id} from Linear issue ${issue.identifier}`,
             })
           );
+          targetStory = created;
+        }
+
+        if (input.config.includeComments && targetStory) {
+          const createdComments = await syncLinearCommentsToShortcutStory({
+            shortcutClient,
+            linearClient,
+            issue,
+            storyId: targetStory.id,
+          });
+
+          if (createdComments > 0) {
+            events.push(
+              createEvent({
+                level: 'INFO',
+                source: 'linear',
+                action: 'create',
+                entityType: 'story',
+                entityId: String(targetStory.id),
+                message: `Created ${createdComments} comment(s) on Shortcut story ${targetStory.id} from Linear issue ${issue.identifier}`,
+              })
+            );
+          }
         }
       } catch (error) {
         delta.errors += 1;

@@ -1,6 +1,11 @@
 import { appendMigrationHistory, getState } from '../db';
 import { LinearClient } from '../linear/client';
 import { ShortcutClient } from '../shortcut/client';
+import {
+  buildLinearStateIdByShortcutType,
+  buildShortcutStateTypeById,
+  mapStoryToLinearStateId,
+} from '../workflow-state-mapping';
 import { LinearTeam, ShortcutComment, ShortcutStory, ShortcutTeam } from '@/types';
 
 export type MigrationPhase =
@@ -406,12 +411,18 @@ export async function runMigration(
         ? shortcut.getStoriesForTeam(options.shortcutTeamId)
         : shortcut.getAllStories();
 
-    const [labels, epics, iterations, fetchedStories] = await Promise.all([
+    const [labels, epics, iterations, fetchedStories, shortcutWorkflows, linearWorkflowStates] =
+      await Promise.all([
       shortcut.getLabels(),
       shortcut.getEpics(),
       shortcut.getIterations(),
       storiesPromise,
+      shortcut.getWorkflows(),
+      linear.getWorkflowStates(options.linearTeamId),
     ]);
+
+    const shortcutStateTypeById = buildShortcutStateTypeById(shortcutWorkflows);
+    const linearStateIdByShortcutType = buildLinearStateIdByShortcutType(linearWorkflowStates);
 
     let stories = fetchedStories;
 
@@ -626,10 +637,16 @@ export async function runMigration(
             migratedStories.push({ story, issueId: plannedId });
             markPlannedOrCreated(result.stats.issues, options.dryRun);
           } else {
+            const stateId = mapStoryToLinearStateId(
+              story,
+              shortcutStateTypeById,
+              linearStateIdByShortcutType
+            );
             const created = await linear.createIssue({
               teamId: options.linearTeamId,
               title: story.name,
               description: buildIssueDescription(story),
+              stateId,
               projectId: story.epic_id ? projectMap.get(story.epic_id) : undefined,
               cycleId: story.iteration_id ? cycleMap.get(story.iteration_id) : undefined,
               labelIds: story.labels

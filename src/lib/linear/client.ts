@@ -1,6 +1,7 @@
 import { LinearClient as LinearSDK } from '@linear/sdk';
 import {
   LinearCycle,
+  LinearComment,
   LinearIssue,
   LinearLabel,
   LinearProject,
@@ -398,6 +399,39 @@ export class LinearClient {
   }
 
   // Comments
+  async getIssueComments(issueId: string, options: ListOptions = {}): Promise<LinearComment[]> {
+    const issue = await this.client.issue(issueId);
+    const comments = await issue.comments({ first: options.pageSize ?? 250 });
+    const nodes = await this.collectNodes(
+      comments as PaginatableConnection<(typeof comments.nodes)[0]>,
+      options
+    );
+
+    return Promise.all(
+      nodes.map(async (comment) => {
+        const user = await comment.user;
+        return {
+          id: comment.id,
+          body: comment.body,
+          user: user
+            ? {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                avatarUrl: user.avatarUrl ?? undefined,
+              }
+            : {
+                id: 'unknown',
+                name: 'Unknown',
+                email: '',
+              },
+          createdAt: toIsoString(comment.createdAt),
+          updatedAt: toIsoString(comment.updatedAt),
+        };
+      })
+    );
+  }
+
   async createComment(issueId: string, body: string): Promise<{ id: string }> {
     const result = await this.client.createComment({
       issueId,

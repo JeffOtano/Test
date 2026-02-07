@@ -391,6 +391,22 @@ export class ShortcutClient {
     }
   }
 
+  async createStoryComment(
+    storyId: number,
+    params: {
+      text: string;
+      author_id?: string;
+      created_at?: string;
+      external_id?: string;
+      parent_id?: number;
+      updated_at?: string;
+    }
+  ): Promise<ShortcutComment> {
+    await this.checkRateLimit();
+    const response = await this.client.post(`/stories/${storyId}/comments`, params);
+    return response.data;
+  }
+
   // Export all data
   async exportAll(): Promise<{
     members: ShortcutMember[];

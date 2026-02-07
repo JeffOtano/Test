@@ -21,6 +21,7 @@ Set at least:
 - `GOODBYE_SHORTCUT_TOKEN` (or `GOODBYE_LIVE_SHORTCUT_TOKEN`)
 - `GOODBYE_LINEAR_TOKEN` (or `GOODBYE_LIVE_LINEAR_TOKEN`)
 - `GOODBYE_LINEAR_TEAM_ID` (or `GOODBYE_LIVE_LINEAR_TEAM_ID`)
+  Value can be either the Linear team UUID or team key (for example `SP`).
 
 Optional:
 

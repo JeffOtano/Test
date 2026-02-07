@@ -364,6 +364,8 @@ export async function runMigration(
   const linear = new LinearClient(state.linearToken);
 
   try {
+    const resolvedLinearTeamId = await linear.resolveTeamId(options.linearTeamId);
+
     onProgress({
       phase: 'preflight',
       current: 0,
@@ -371,14 +373,14 @@ export async function runMigration(
       message: 'Validating target team and loading existing Linear data...',
     });
 
-    await linear.getTeam(options.linearTeamId);
+    await linear.getTeam(resolvedLinearTeamId);
 
     const [existingLabels, existingProjects, existingCycles, existingIssues] =
       await Promise.all([
-        linear.getLabels(options.linearTeamId, { includeAllPages: true }),
-        linear.getProjects(options.linearTeamId, { includeAllPages: true }),
-        linear.getCycles(options.linearTeamId, { includeAllPages: true }),
-        linear.getIssues(options.linearTeamId, { includeAllPages: true }),
+        linear.getLabels(resolvedLinearTeamId, { includeAllPages: true }),
+        linear.getProjects(resolvedLinearTeamId, { includeAllPages: true }),
+        linear.getCycles(resolvedLinearTeamId, { includeAllPages: true }),
+        linear.getIssues(resolvedLinearTeamId, { includeAllPages: true }),
       ]);
 
     if (options.dryRun) {
@@ -418,7 +420,7 @@ export async function runMigration(
       shortcut.getIterations(),
       storiesPromise,
       shortcut.getWorkflows(),
-      linear.getWorkflowStates(options.linearTeamId),
+      linear.getWorkflowStates(resolvedLinearTeamId),
     ]);
 
     const shortcutStateTypeById = buildShortcutStateTypeById(shortcutWorkflows);
@@ -467,7 +469,7 @@ export async function runMigration(
             const created = await linear.createLabel(
               label.name,
               label.color || '#6B7280',
-              options.linearTeamId
+              resolvedLinearTeamId
             );
             labelMap.set(label.id, created.id);
             existingLabelByName.set(normalizedName, created.id);
@@ -520,7 +522,7 @@ export async function runMigration(
           } else {
             const created = await linear.createProject(
               epic.name,
-              [options.linearTeamId],
+              [resolvedLinearTeamId],
               epic.description
             );
             projectMap.set(epic.id, created.id);
@@ -580,7 +582,7 @@ export async function runMigration(
             markPlannedOrCreated(result.stats.cycles, options.dryRun);
           } else {
             const created = await linear.createCycle(
-              options.linearTeamId,
+              resolvedLinearTeamId,
               new Date(iteration.start_date),
               new Date(iteration.end_date),
               iteration.name
@@ -643,7 +645,7 @@ export async function runMigration(
               linearStateIdByShortcutType
             );
             const created = await linear.createIssue({
-              teamId: options.linearTeamId,
+              teamId: resolvedLinearTeamId,
               title: story.name,
               description: buildIssueDescription(story),
               stateId,

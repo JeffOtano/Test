@@ -26,6 +26,9 @@ interface ListOptions {
   pageSize?: number;
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function toIsoString(value: Date | null | undefined): string {
   return value instanceof Date ? value.toISOString() : new Date(0).toISOString();
 }
@@ -111,6 +114,37 @@ export class LinearClient {
       key: team.key,
       description: team.description ?? undefined,
     };
+  }
+
+  async resolveTeamId(teamIdOrKey: string): Promise<string> {
+    const candidate = teamIdOrKey.trim();
+    if (!candidate) {
+      throw new Error('Missing target Linear team');
+    }
+
+    if (UUID_PATTERN.test(candidate)) {
+      return candidate;
+    }
+
+    try {
+      const directTeam = await this.getTeam(candidate);
+      if (directTeam.id) return directTeam.id;
+    } catch {
+      // Continue with key/name lookup.
+    }
+
+    const teams = await this.getTeams({ includeAllPages: true });
+    const normalized = candidate.toLowerCase();
+
+    const byKey = teams.find((team) => team.key.toLowerCase() === normalized);
+    if (byKey) return byKey.id;
+
+    const byName = teams.find((team) => team.name.toLowerCase() === normalized);
+    if (byName) return byName.id;
+
+    throw new Error(
+      `Linear team "${candidate}" not found. Use a team id or team key.`
+    );
   }
 
   async createTeam(name: string, key: string, description?: string): Promise<LinearTeam> {

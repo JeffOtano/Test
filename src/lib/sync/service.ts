@@ -492,6 +492,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
 
   const shortcutClient = new ShortcutClient(input.shortcutToken);
   const linearClient = new LinearClient(input.linearToken);
+  const resolvedLinearTeamId = await linearClient.resolveTeamId(input.config.linearTeamId);
 
   const sourceLabel = input.triggerSource ?? 'system';
   const reasonLabel = input.triggerReason ?? 'scheduled cycle';
@@ -513,10 +514,10 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
     ? shortcutClient.getStoriesForTeam(input.config.shortcutTeamId)
     : shortcutClient.getAllStories();
 
-  const issuesPromise = linearClient.getIssues(input.config.linearTeamId, {
+  const issuesPromise = linearClient.getIssues(resolvedLinearTeamId, {
     includeAllPages: true,
   });
-  const linearLabelsPromise = linearClient.getLabels(input.config.linearTeamId, {
+  const linearLabelsPromise = linearClient.getLabels(resolvedLinearTeamId, {
     includeAllPages: true,
   });
 
@@ -524,7 +525,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
   const linearWorkflowStatesPromise =
     input.config.direction === 'LINEAR_TO_SHORTCUT'
       ? Promise.resolve([])
-      : linearClient.getWorkflowStates(input.config.linearTeamId);
+      : linearClient.getWorkflowStates(resolvedLinearTeamId);
 
   const [stories, issues, linearLabels, shortcutWorkflows, linearWorkflowStates] =
     await Promise.all([
@@ -560,7 +561,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
       const created = await linearClient.createLabel(
         name,
         normalizeHexColor(label.color),
-        input.config.linearTeamId
+        resolvedLinearTeamId
       );
       linearLabelIdByName.set(key, created.id);
       labelIds.push(created.id);
@@ -739,7 +740,7 @@ export async function runSyncCycle(input: RunSyncCycleInput): Promise<SyncCycleR
           }
         } else {
           const created = await linearClient.createIssue({
-            teamId: input.config.linearTeamId,
+            teamId: resolvedLinearTeamId,
             title: story.name,
             description: nextDescription,
             stateId: nextStateId,

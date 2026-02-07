@@ -219,6 +219,9 @@ async function main(): Promise<void> {
 
   const shortcut = new ShortcutClient(config.shortcutToken);
   const linear = new LinearClient(config.linearToken);
+  const resolvedLinearTeamId = await linear.resolveTeamId(config.linearTeamId);
+  report.config.linearTeamId = resolvedLinearTeamId;
+  report.fixture.linearTeamId = resolvedLinearTeamId;
 
   let createdStoryId: number | undefined;
   let createdIssueId: string | undefined;
@@ -228,7 +231,7 @@ async function main(): Promise<void> {
       await Promise.all([
         shortcut.getCurrentMember(),
         linear.getCurrentUser(),
-        linear.getTeam(config.linearTeamId),
+        linear.getTeam(resolvedLinearTeamId),
         shortcut.getTeams(),
         shortcut.getWorkflows(),
       ]);
@@ -329,7 +332,7 @@ async function main(): Promise<void> {
         direction: 'SHORTCUT_TO_LINEAR',
         conflictPolicy: 'NEWEST_WINS',
         shortcutTeamId: sourceTeamId,
-        linearTeamId: config.linearTeamId,
+        linearTeamId: resolvedLinearTeamId,
         includeComments: true,
         includeAttachments: true,
       },
@@ -354,7 +357,7 @@ async function main(): Promise<void> {
     const createdIssue = createdIssueEvent
       ? await linear.getIssue(createdIssueEvent.entityId)
       : (await linear
-          .getIssues(config.linearTeamId, { includeAllPages: true }))
+          .getIssues(resolvedLinearTeamId, { includeAllPages: true }))
           .find((issue) => (issue.description ?? '').includes(`Shortcut Story ID: ${createdStory.id}`));
 
     appendCheck(
@@ -416,7 +419,7 @@ async function main(): Promise<void> {
     );
 
     const shortcutStateTypeById = buildShortcutStateTypeById(shortcutWorkflows);
-    const linearWorkflowStates = await linear.getWorkflowStates(config.linearTeamId);
+    const linearWorkflowStates = await linear.getWorkflowStates(resolvedLinearTeamId);
     const linearStateIdByShortcutType = buildLinearStateIdByShortcutType(linearWorkflowStates);
     const expectedLinearStateIdPhase1 = mapStoryToLinearStateId(
       createdStory,
@@ -462,7 +465,7 @@ async function main(): Promise<void> {
         direction: 'SHORTCUT_TO_LINEAR',
         conflictPolicy: 'NEWEST_WINS',
         shortcutTeamId: sourceTeamId,
-        linearTeamId: config.linearTeamId,
+        linearTeamId: resolvedLinearTeamId,
         includeComments: true,
         includeAttachments: true,
       },
@@ -531,7 +534,7 @@ async function main(): Promise<void> {
     const reverseLabel = await linear.createLabel(
       reverseLabelName,
       '#16A34A',
-      config.linearTeamId
+      resolvedLinearTeamId
     );
 
     const nextLabelIds = Array.from(
@@ -563,7 +566,7 @@ async function main(): Promise<void> {
         direction: 'LINEAR_TO_SHORTCUT',
         conflictPolicy: 'NEWEST_WINS',
         shortcutTeamId: sourceTeamId,
-        linearTeamId: config.linearTeamId,
+        linearTeamId: resolvedLinearTeamId,
         includeComments: true,
         includeAttachments: true,
       },
